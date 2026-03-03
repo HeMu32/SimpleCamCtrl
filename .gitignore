@@ -59,10 +59,11 @@ coverage/
 *.gcov
 
 # Third-party build artifacts (keep sources / submodules)
-/3rdparty/*/build/
-/3rdparty/*/cmake-build-*/
+**/build/
+**/cmake-build-*/
 
 /3rdparty/ffmpeg/
+/3rdparty/CamRmCmd_Demos/
 
 # User-specific CMake presets
 CMakeUserPresets.json
