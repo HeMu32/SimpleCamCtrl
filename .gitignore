@@ -60,6 +60,7 @@ coverage/
 
 # Third-party build artifacts (keep sources / submodules)
 **/build/
+**/parent-build/
 **/cmake-build-*/
 
 /3rdparty/ffmpeg/
