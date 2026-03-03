@@ -1,0 +1,3 @@
+[submodule "3rdparty/RSCtrlApp-Commons"]
+	path = 3rdparty/RSCtrlApp-Commons
+	url = https://github.com/HeMu32/RSCtrlApp-Commons
