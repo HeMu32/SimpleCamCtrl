@@ -24,5 +24,6 @@ if(NOT EXISTS "${RSCA_COMMONS_DIR}/CamCtrl/ISimpleCamCtrl.h")
 endif()
 
 add_subdirectory(src)
+add_subdirectory(demo)
 
 message(STATUS "Configured SimpleCamCtrl with camctrl library")

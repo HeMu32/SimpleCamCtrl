@@ -58,9 +58,10 @@ public:
     // Movie recording state accessor
     bool IsMovieRecording() const;
     /**
-     * @brief Change exposure parameters with raw PTP values.
+     * @brief Change exposure parameters using physical values.
      * @param params Desired exposure parameters; implementations may apply a subset
-     * of fields depending on device support. Any non-exposure fields are ignored.
+        * of fields depending on device support. Shutter is represented in reciprocal
+        * form (1/sec). Any non-exposure fields are ignored.
      * @return true on success.
      */
     bool SetExposureParams(const ExposureParams &params) override;

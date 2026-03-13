@@ -12,6 +12,7 @@
 #include <wia.h>
 
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <thread>
 
@@ -231,7 +232,10 @@ int main(int argc, char *argv[])
     SonyPTP3_Impl::ExposureParams params;
     if (cam.GetExposureParams(params))
     {
-        std::cout << "Shutter: " << params.shutter_speed << " ISO: " << params.iso << "\n";
+        std::cout << std::fixed << std::setprecision(4)
+                  << "Shutter(1/sec): " << params.shutter_speed
+                  << " FNo: " << params.f_number
+                  << " ISO: " << params.iso << "\n";
     }
 
     cam.Disconnect();

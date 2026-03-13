@@ -1,12 +1,113 @@
 #include "SonyPTP3_Impl.h"
 #include "SonyPTP3_aux.h"
 
+#include <cmath>
 #include <cstring> // for std::memcpy
 
 namespace
 {
     constexpr std::uint32_t kButtonDown = 0x0002;
     constexpr std::uint32_t kButtonUp = 0x0001;
+
+    double DecodeShutterSpeedSeconds(std::uint32_t raw_shutter)
+    {
+        if (raw_shutter == 0U || raw_shutter == 0xFFFFFFFFU)
+        {
+            return 0.0;
+        }
+
+        const std::uint32_t numerator = (raw_shutter >> 16) & 0xFFFFU;
+        const std::uint32_t denominator = raw_shutter & 0xFFFFU;
+        if (denominator == 0U)
+        {
+            return 0.0;
+        }
+
+        return static_cast<double>(numerator) / static_cast<double>(denominator);
+    }
+
+    double DecodeShutterSpeedReciprocal(std::uint32_t raw_shutter)
+    {
+        const double shutter_seconds = DecodeShutterSpeedSeconds(raw_shutter);
+        if (!(shutter_seconds > 0.0))
+        {
+            return 0.0;
+        }
+        return 1.0 / shutter_seconds;
+    }
+
+    std::uint32_t EncodeShutterSpeedRawFromSeconds(double shutter_seconds)
+    {
+        if (!(shutter_seconds > 0.0))
+        {
+            return 0U;
+        }
+
+        std::uint32_t best_numerator = 1U;
+        std::uint32_t best_denominator = 1U;
+        double best_error = std::abs(shutter_seconds - 1.0);
+
+        for (std::uint32_t denominator = 1U; denominator <= 10000U; ++denominator)
+        {
+            const double numerator_real = shutter_seconds * static_cast<double>(denominator);
+            const long long numerator_rounded = std::llround(numerator_real);
+            if (numerator_rounded < 1LL || numerator_rounded > 65535LL)
+            {
+                continue;
+            }
+
+            const double candidate = static_cast<double>(numerator_rounded) /
+                                     static_cast<double>(denominator);
+            const double error = std::abs(shutter_seconds - candidate);
+            if (error < best_error)
+            {
+                best_error = error;
+                best_numerator = static_cast<std::uint32_t>(numerator_rounded);
+                best_denominator = denominator;
+                if (best_error == 0.0)
+                {
+                    break;
+                }
+            }
+        }
+
+        return (best_numerator << 16) | best_denominator;
+    }
+
+    std::uint32_t EncodeShutterSpeedRaw(double shutter_speed_reciprocal)
+    {
+        if (!(shutter_speed_reciprocal > 0.0))
+        {
+            return 0U;
+        }
+
+        const double shutter_seconds = 1.0 / shutter_speed_reciprocal;
+        return EncodeShutterSpeedRawFromSeconds(shutter_seconds);
+    }
+
+    double DecodeFNumber(std::uint16_t raw_f_number)
+    {
+        return static_cast<double>(raw_f_number) / 100.0;
+    }
+
+    std::uint16_t EncodeFNumberRaw(double f_number)
+    {
+        if (!(f_number > 0.0))
+        {
+            return 0U;
+        }
+
+        const long long raw = std::llround(f_number * 100.0);
+        if (raw < 0LL)
+        {
+            return 0U;
+        }
+        if (raw > 65535LL)
+        {
+            return 65535U;
+        }
+        return static_cast<std::uint16_t>(raw);
+    }
 }
 
 SonyPTP3_Impl::SonyPTP3_Impl() = default;
@@ -157,11 +258,13 @@ bool SonyPTP3_Impl::UpdateStatus()
 
     if (itShutter != props.end())
     {
-        cache_.exposure_params.shutter_speed = static_cast<std::uint32_t>(itShutter->second);
+        cache_.exposure_params.shutter_speed =
+            DecodeShutterSpeedReciprocal(static_cast<std::uint32_t>(itShutter->second));
     }
     if (itFNo != props.end())
     {
-        cache_.exposure_params.f_number = static_cast<std::uint16_t>(itFNo->second);
+        cache_.exposure_params.f_number =
+            DecodeFNumber(static_cast<std::uint16_t>(itFNo->second));
     }
     if (itIso != props.end())
     {
@@ -285,9 +388,11 @@ bool SonyPTP3_Impl::SetExposureParams(const ExposureParams &params)
     }
 
     bool ok = true;
-    ok &= SetDevicePropValue(sonyptp3::DPC_SHUTTER_SPEED, params.shutter_speed,
+    ok &= SetDevicePropValue(sonyptp3::DPC_SHUTTER_SPEED,
+                             EncodeShutterSpeedRaw(params.shutter_speed),
                              sizeof(std::uint32_t));
-    ok &= SetDevicePropValue(sonyptp3::DPC_FNUMBER, params.f_number,
+    ok &= SetDevicePropValue(sonyptp3::DPC_FNUMBER,
+                             EncodeFNumberRaw(params.f_number),
                              sizeof(std::uint16_t));
     ok &= SetDevicePropValue(sonyptp3::DPC_ISO, params.iso, sizeof(std::uint32_t));
     ok &= SetDevicePropValue(sonyptp3::DPC_EXPOSURE_COMPENSATION, params.exposure_comp,
