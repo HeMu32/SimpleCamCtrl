@@ -1,37 +1,35 @@
 cmake_minimum_required(VERSION 3.10)
 project(camctrl_demo LANGUAGES CXX)
 
-# Ensure camctrl library target is available. If the demo is configured
-# standalone (from demo/), create the camctrl target locally using the
-# parent sources. This avoids double-configuring the parent project.
-if(NOT TARGET camctrl)
-    message(STATUS "camctrl target not found; adding parent project to build it")
-    # When the demo is configured on its own the parent directory holds the
-    # canonical definition of the library; simply re‑enter it instead of
-    # copying source lists.  This avoids drift and keeps maintenance
-    # centralized.
-    add_subdirectory(${CMAKE_SOURCE_DIR}/.. ${CMAKE_BINARY_DIR}/parent_build)
+get_filename_component(SIMPLECAMCTRL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
+
+if(NOT DEFINED RSCA_COMMONS_DIR)
+    if(DEFINED RSCA_3RDPARTY_DIR AND EXISTS "${RSCA_3RDPARTY_DIR}/RSCtrlApp-Commons/CamCtrl/ISimpleCamCtrl.h")
+        set(RSCA_COMMONS_DIR "${RSCA_3RDPARTY_DIR}/RSCtrlApp-Commons")
+    else()
+        set(RSCA_COMMONS_DIR "${SIMPLECAMCTRL_ROOT}/3rdparty/RSCtrlApp-Commons")
+    endif()
 endif()
 
-add_executable(demo_driver
-    demo_driver.cpp
-)
+if(NOT TARGET camctrl)
+    message(STATUS "camctrl target not found; adding parent project to build it")
+    add_subdirectory("${SIMPLECAMCTRL_ROOT}" "${CMAKE_BINARY_DIR}/parent_build")
+endif()
 
-add_executable(scaffold_polling_demo
-    scaffold_polling_demo.cpp
-)
+add_executable(demo_driver demo_driver.cpp)
+add_executable(scaffold_polling_demo scaffold_polling_demo.cpp)
 
 target_link_libraries(demo_driver PRIVATE camctrl ole32 oleaut32 uuid)
 target_link_libraries(scaffold_polling_demo PRIVATE camctrl ole32 oleaut32 uuid)
 
 target_include_directories(demo_driver PRIVATE
-    ${CMAKE_SOURCE_DIR}/.. # for 3rdparty includes and headers
-    ${CMAKE_SOURCE_DIR}/../3rdparty/RSCtrlApp-Commons
+    ${SIMPLECAMCTRL_ROOT}
+    ${RSCA_COMMONS_DIR}
 )
 
 target_include_directories(scaffold_polling_demo PRIVATE
-    ${CMAKE_SOURCE_DIR}/..
-    ${CMAKE_SOURCE_DIR}/../3rdparty/RSCtrlApp-Commons
+    ${SIMPLECAMCTRL_ROOT}
+    ${RSCA_COMMONS_DIR}
 )
 
 set_target_properties(demo_driver PROPERTIES
