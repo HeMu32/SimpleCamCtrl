@@ -27,6 +27,7 @@ add_library(camctrl
   SonyPTP3/SonyPTP3_Impl.cpp
   SonyPTP3/SonyPTP3_aux.cpp
   Windows/WiaTransport.cpp
+  SonyPTP3DevEnum/SonyPTP3DevEnum.cpp
 )
 
 # Public include directories.
@@ -34,6 +35,7 @@ target_include_directories(camctrl PUBLIC
   # Implementation headers
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/SonyPTP3>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/Windows>
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/SonyPTP3DevEnum>
   # Keep the broad src path for compatibility with existing includes.
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
   # Expose the parent of CamCtrl for includes like <CamCtrl/ISimpleCamCtrl.h>.
