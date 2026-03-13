@@ -127,29 +127,63 @@ bool SonyPTP3_Impl::UpdateStatus()
         return false;
     }
 
-    auto props = sonyptp3::ParseDeviceProperties(res.payload);
-    auto getv = [&](std::uint16_t code) -> std::uint64_t
+    std::unordered_map<std::uint16_t, std::uint64_t> props;
+    try
     {
-        auto it = props.find(code);
-        return (it == props.end()) ? 0 : it->second;
-    };
-
-    cache_.exposure_params.shutter_speed =
-        static_cast<std::uint32_t>(getv(sonyptp3::DPC_SHUTTER_SPEED));
-    cache_.exposure_params.f_number =
-        static_cast<std::uint16_t>(getv(sonyptp3::DPC_FNUMBER));
-    cache_.exposure_params.iso = static_cast<std::uint32_t>(getv(sonyptp3::DPC_ISO));
-    cache_.exposure_params.exposure_comp =
-        static_cast<std::int32_t>(getv(sonyptp3::DPC_EXPOSURE_COMPENSATION));
-    cache_.exposure_mode = static_cast<std::uint32_t>(getv(sonyptp3::DPC_EXPOSURE_MODE));
-    {
-        auto itMovie = props.find(sonyptp3::DPC_MOVIE_REC);
-        if (itMovie != props.end())
-        {
-            cache_.movie_recording = (itMovie->second != 0);
-        }
+        props = sonyptp3::ParseDeviceProperties(res.payload);
     }
-    has_status_ = true;
+    catch (...)
+    {
+        return false;
+    }
+    const auto itShutter = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_SHUTTER_SPEED));
+    const auto itFNo = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FNUMBER));
+    const auto itIso = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_ISO));
+    const auto itExpComp = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_EXPOSURE_COMPENSATION));
+    const auto itExpMode = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_EXPOSURE_MODE));
+    const auto itMovie = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_MOVIE_REC));
+
+    const bool bHasAnyExposureField =
+        (itShutter != props.end()) ||
+        (itFNo != props.end()) ||
+        (itIso != props.end()) ||
+        (itExpComp != props.end()) ||
+        (itExpMode != props.end());
+
+    if (!bHasAnyExposureField && !has_status_)
+    {
+        return false;
+    }
+
+    if (itShutter != props.end())
+    {
+        cache_.exposure_params.shutter_speed = static_cast<std::uint32_t>(itShutter->second);
+    }
+    if (itFNo != props.end())
+    {
+        cache_.exposure_params.f_number = static_cast<std::uint16_t>(itFNo->second);
+    }
+    if (itIso != props.end())
+    {
+        cache_.exposure_params.iso = static_cast<std::uint32_t>(itIso->second);
+    }
+    if (itExpComp != props.end())
+    {
+        cache_.exposure_params.exposure_comp = static_cast<std::int32_t>(itExpComp->second);
+    }
+    if (itExpMode != props.end())
+    {
+        cache_.exposure_mode = static_cast<std::uint32_t>(itExpMode->second);
+    }
+    if (itMovie != props.end())
+    {
+        cache_.movie_recording = (itMovie->second != 0);
+    }
+
+    if (bHasAnyExposureField)
+    {
+        has_status_ = true;
+    }
     return true;
 }
 
