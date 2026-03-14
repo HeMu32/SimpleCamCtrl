@@ -37,6 +37,23 @@ PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<st
         return out;
     }
 
+    bool bCOMInitHere = false;
+    {
+        const HRESULT hrCom = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+        if (hrCom == S_OK)
+        {
+            bCOMInitHere = true;
+        }
+        else if (hrCom == S_FALSE || hrCom == RPC_E_CHANGED_MODE)
+        {
+        }
+        else
+        {
+            out.hr = static_cast<std::int32_t>(hrCom);
+            return out;
+        }
+    }
+
 #pragma pack(push, 1)
     struct Local_PTP_VENDOR_DATA_IN
     {
@@ -66,6 +83,8 @@ PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<st
     if (!pIn)
     {
         out.hr = E_OUTOFMEMORY;
+        if (bCOMInitHere)
+            CoUninitialize();
         return out;
     }
     ZeroMemory(pIn, dwInSize);
@@ -88,6 +107,8 @@ PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<st
     {
         CoTaskMemFree(pIn);
         out.hr = E_OUTOFMEMORY;
+        if (bCOMInitHere)
+            CoUninitialize();
         return out;
     }
     ZeroMemory(pOut, dwOutSize);
@@ -112,6 +133,9 @@ PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<st
 
     CoTaskMemFree(pIn);
     CoTaskMemFree(pOut);
+
+    if (bCOMInitHere)
+        CoUninitialize();
 
     return out;
 }

@@ -437,16 +437,17 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
     auto spTransport = std::make_shared<WiaTransport>(pExtras);
     SafeRelease(pExtras);
     SafeRelease(pWiaMgr);
-    if (bCOMInitHere) { CoUninitialize(); }
 
     auto spSony = std::make_shared<SonyPTP3_Impl>();
     if (!spSony->SetPtpTransport(spTransport))
     {
+        if (bCOMInitHere) { CoUninitialize(); }
         return nullptr;
     }
 
     if (!spSony->Connect())
     {
+        if (bCOMInitHere) { CoUninitialize(); }
         return nullptr;
     }
 
@@ -454,6 +455,8 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
     {
         spSony->UpdateStatus();
     }
+
+    if (bCOMInitHere) { CoUninitialize(); }
 
     return std::static_pointer_cast<void>(spSony);
 }
