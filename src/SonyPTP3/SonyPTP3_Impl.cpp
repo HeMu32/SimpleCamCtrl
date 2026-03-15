@@ -3,6 +3,7 @@
 
 #include <cmath>
 #include <cstring> // for std::memcpy
+#include <thread>
 
 namespace
 {
@@ -125,40 +126,123 @@ bool SonyPTP3_Impl::Connect()
         return false;
     }
 
-    auto call = [&](std::uint16_t opcode, const std::vector<std::uint32_t> &params) -> bool
+    auto call = [&](std::uint16_t opcode, const std::vector<std::uint32_t> &params,
+                    PTP_EscapeResult &out_res) -> bool
     {
-        PTP_EscapeResult res = transport_->Escape(opcode, params, nullptr, 0);
-        return !PTP_HR_FAILED(res.hr);
+        out_res = transport_->Escape(opcode, params, nullptr, 0);
+        return !PTP_HR_FAILED(out_res.hr) && out_res.responseCode == sonyptp3::PTP_RC_OK;
     };
 
-    if (!call(sonyptp3::PTP_OC_SDIOConnect, {1, 0, 0}))
+    // Helper method 
+    // When the camera immediately rejects connection attempts (e.g. Device Busy,
+    // Session Not Open, Authentication Failed), we send a CloseSession before
+    // retrying to ensure the camera is left in a clean, disconnected state.
+    auto send_disconnect_message = [&]()
     {
-        connection_state_ = ConnectionState::Disconnected;
-        return false;
-    }
-    if (!call(sonyptp3::PTP_OC_SDIOConnect, {2, 0, 0}))
-    {
-        connection_state_ = ConnectionState::Disconnected;
-        return false;
-    }
+        PTP_EscapeResult close_res = transport_->Escape(sonyptp3::PTP_OC_CloseSession, {}, nullptr, 0);
+        (void)close_res;
+    };
 
-    if (!call(sonyptp3::PTP_OC_SDIOGetExtDeviceInfo, {sonyptp3::SDI_Extension_Version}))
+    // Hepler method
+    // Some response codes mean the camera actively refused the connection
+    // attempt (e.g. it is busy, already has a session, or rejected auth). In
+    // these cases we want to also emit a CloseSession before retrying to
+    // recover the camera into a known clean state.
+    auto is_immediate_reject = [&](const PTP_EscapeResult &res) -> bool
     {
-        connection_state_ = ConnectionState::Disconnected;
-        return false;
-    }
+        if (PTP_HR_FAILED(res.hr))
+        {
+            // Transport-level failure; retry logic belongs at call site.
+            return false;
+        }
+        if (res.responseCode == sonyptp3::PTP_RC_OK)
+        {
+            return false;
+        }
+        switch (res.responseCode)
+        {
+        case sonyptp3::PTP_RC_DEVICE_BUSY:
+        case sonyptp3::PTP_RC_SESSION_ALREADY_OPEN:
+        case sonyptp3::PTP_RC_SESSION_NOT_OPEN:
+        case sonyptp3::PTP_RC_AUTHENTICATION_FAILED:
+            return true;
+        default:
+            return false;
+        }
+    };
 
-    if (!call(sonyptp3::PTP_OC_SDIOConnect, {3, 0, 0}))
-    {
-        connection_state_ = ConnectionState::Disconnected;
-        return false;
-    }
+    PTP_EscapeResult last_res{};
 
-    PTP_EscapeResult openRes = transport_->Escape(sonyptp3::PTP_OC_SDIOOpenSession, {1}, nullptr, 0);
-    if (PTP_HR_FAILED(openRes.hr) || openRes.responseCode != sonyptp3::PTP_RC_OK)
+    // Helper method
+    auto connect_once_with_detail = [&](PTP_EscapeResult &out_last_res) -> bool
     {
-        connection_state_ = ConnectionState::Disconnected;
-        return false;
+        PTP_EscapeResult res{};
+        if (!call(sonyptp3::PTP_OC_SDIOConnect, {1, 0, 0}, res))
+        {
+            out_last_res = res;
+            return false;
+        }
+        if (!call(sonyptp3::PTP_OC_SDIOConnect, {2, 0, 0}, res))
+        {
+            out_last_res = res;
+            return false;
+        }
+
+        bool ext_info_ok = false;
+        PTP_EscapeResult last_ext_res = res;
+        for (int iTry = 0; iTry < 3; ++iTry)
+        {
+            if (!call(sonyptp3::PTP_OC_SDIOGetExtDeviceInfo, {sonyptp3::SDI_Extension_Version}, res))
+            {
+                last_ext_res = res;
+                continue;
+            }
+            last_ext_res = res;
+            if (!res.payload.empty())
+            {
+                ext_info_ok = true;
+                break;
+            }
+        }
+        if (!ext_info_ok)
+        {
+            out_last_res = last_ext_res;
+            return false;
+        }
+
+        if (!call(sonyptp3::PTP_OC_SDIOConnect, {3, 0, 0}, res))
+        {
+            out_last_res = res;
+            return false;
+        }
+
+        PTP_EscapeResult open_res = transport_->Escape(sonyptp3::PTP_OC_SDIOOpenSession, {1}, nullptr, 0);
+        if (PTP_HR_FAILED(open_res.hr) || open_res.responseCode != sonyptp3::PTP_RC_OK)
+        {
+            out_last_res = open_res;
+            return false;
+        }
+        out_last_res = open_res;
+        return true;
+    };
+
+    if (!connect_once_with_detail(last_res))
+    {
+        if (is_immediate_reject(last_res))
+        {
+            send_disconnect_message();
+            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            if (!connect_once_with_detail(last_res))
+            {
+                connection_state_ = ConnectionState::Disconnected;
+                return false;
+            }
+        }
+        else
+        {
+            connection_state_ = ConnectionState::Disconnected;
+            return false;
+        }
     }
 
     connection_state_ = ConnectionState::SessionOpen;

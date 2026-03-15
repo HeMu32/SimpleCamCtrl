@@ -33,6 +33,15 @@ namespace sonyptp3
     constexpr std::uint16_t PTP_RC_OK = 0x2001;
     constexpr std::uint16_t PTP_RC_UNDEFINED = 0x2000;
 
+    // The following response codes are treated as *immediate rejects* during
+    // the SDIO connection sequence (e.g. camera says "no" before the session
+    // is established). When these occur, we send a CloseSession to ensure the
+    // camera is returned to a clean state and then retry once.
+    constexpr std::uint16_t PTP_RC_SESSION_NOT_OPEN = 0x2003;
+    constexpr std::uint16_t PTP_RC_DEVICE_BUSY = 0x2019;
+    constexpr std::uint16_t PTP_RC_SESSION_ALREADY_OPEN = 0x201E;
+    constexpr std::uint16_t PTP_RC_AUTHENTICATION_FAILED = 0xA101;
+
     // Device Property Codes (Sony Vendor Extension)
     constexpr std::uint32_t DPC_MOVIE_REC = 0xD2C8;
     constexpr std::uint32_t DPC_S1_BUTTON = 0xD2C1;
