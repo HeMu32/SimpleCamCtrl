@@ -117,7 +117,7 @@ SonyPTP3_Impl::~SonyPTP3_Impl() { Disconnect(); }
 
 bool SonyPTP3_Impl::Connect()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_CONN_TIMEOUT_MS));
     if (!lock) return false;
     
     if (!transport_)
@@ -231,7 +231,7 @@ bool SonyPTP3_Impl::Connect()
         if (is_immediate_reject(last_res))
         {
             send_disconnect_message();
-            std::this_thread::sleep_for(std::chrono::milliseconds(120));
+            std::this_thread::sleep_for(std::chrono::milliseconds(_CONN_RETRY_TIMEOUT_MS));
             if (!connect_once_with_detail(last_res))
             {
                 connection_state_ = ConnectionState::Disconnected;

@@ -1,5 +1,10 @@
 #pragma once
 
+/// @brief Total timeout for connection attempt
+#define _CONN_TIMEOUT_MS 500
+/// @brief Timeout for retry (disconnect-connect process)
+#define _CONN_RETRY_TIMEOUT_MS 120
+
 #include <cstdint>
 #include <mutex>
 #include <string>
