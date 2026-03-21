@@ -40,9 +40,9 @@ static std::string bstr_to_utf8(BSTR bstr)
     return s;
 }
 
-static bool get_first_wia_item_extras(IWiaItemExtras *&outExtras)
+static bool get_first_wia_device_id(std::string &outDeviceId)
 {
-    outExtras = nullptr;
+    outDeviceId.clear();
 
     IWiaDevMgr *pWiaDevMgr = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_WiaDevMgr, NULL, CLSCTX_LOCAL_SERVER,
@@ -168,22 +168,8 @@ static bool get_first_wia_item_extras(IWiaItemExtras *&outExtras)
         return false;
     }
 
-    IWiaItemExtras *pItemExtra = nullptr;
-    hr = pWiaItemRoot->QueryInterface(IID_IWiaItemExtras,
-                                      reinterpret_cast<void **>(&pItemExtra));
-    if (FAILED(hr) || !pItemExtra)
-    {
-        std::cerr << "Device does not expose IWiaItemExtras: 0x" << std::hex
-                  << hr << "\n";
-        safeRelease(reinterpret_cast<IUnknown *&>(pItemExtra));
-        safeRelease(reinterpret_cast<IUnknown *&>(pWiaItemRoot));
-        safeRelease(reinterpret_cast<IUnknown *&>(pProp));
-        safeRelease(reinterpret_cast<IUnknown *&>(pEnum));
-        safeRelease(reinterpret_cast<IUnknown *&>(pWiaDevMgr));
-        return false;
-    }
-
-    outExtras = pItemExtra; // caller owns and must Release
+    // We only need device id for WiaTransport; avoid handing raw IWiaItemExtras across apartments.
+    outDeviceId = devIdStr;
 
     safeRelease(reinterpret_cast<IUnknown *&>(pWiaItemRoot));
     safeRelease(reinterpret_cast<IUnknown *&>(pProp));
@@ -204,16 +190,15 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    IWiaItemExtras *pExtras = nullptr;
-    if (!get_first_wia_item_extras(pExtras))
+    std::string wiaDeviceId;
+    if (!get_first_wia_device_id(wiaDeviceId))
     {
         CoUninitialize();
         return 1;
     }
 
-    // Wrap the extras in our transport and use the Sony wrapper
-    auto transport = std::make_shared<WiaTransport>(pExtras);
-    safeRelease(reinterpret_cast<IUnknown *&>(pExtras));
+    // Wrap the device ID in our transport and use the Sony wrapper
+    auto transport = std::make_shared<WiaTransport>(wiaDeviceId);
 
     SonyPTP3_Impl cam;
     cam.SetPtpTransport(transport);

@@ -70,9 +70,9 @@ std::string BstrToUtf8(BSTR bstr)
  * @param outExtras Output extras pointer; caller owns and must Release().
  * @return true on success.
  */
-bool GetFirstWiaItemExtras(IWiaItemExtras *&outExtras)
+bool GetFirstWiaDeviceId(std::string &outDeviceId)
 {
-    outExtras = nullptr;
+    outDeviceId.clear();
 
     IWiaDevMgr *pWiaDevMgr = nullptr;
     HRESULT hr = CoCreateInstance(CLSID_WiaDevMgr, nullptr, CLSCTX_LOCAL_SERVER,
@@ -158,36 +158,9 @@ bool GetFirstWiaItemExtras(IWiaItemExtras *&outExtras)
         return false;
     }
 
-    IWiaItem *pWiaItemRoot = nullptr;
-    hr = pWiaDevMgr->CreateDevice(bstrDevId, &pWiaItemRoot);
+    outDeviceId = BstrToUtf8(bstrDevId);
     SysFreeString(bstrDevId);
-    if (FAILED(hr) || !pWiaItemRoot)
-    {
-        std::cerr << "CreateDevice failed, hr=0x" << std::hex << hr << "\n";
-        SafeRelease(reinterpret_cast<IUnknown *&>(pWiaItemRoot));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pProp));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pEnum));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pWiaDevMgr));
-        return false;
-    }
 
-    IWiaItemExtras *pItemExtras = nullptr;
-    hr = pWiaItemRoot->QueryInterface(IID_IWiaItemExtras,
-                                      reinterpret_cast<void **>(&pItemExtras));
-    if (FAILED(hr) || !pItemExtras)
-    {
-        std::cerr << "QueryInterface(IWiaItemExtras) failed, hr=0x" << std::hex << hr << "\n";
-        SafeRelease(reinterpret_cast<IUnknown *&>(pItemExtras));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pWiaItemRoot));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pProp));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pEnum));
-        SafeRelease(reinterpret_cast<IUnknown *&>(pWiaDevMgr));
-        return false;
-    }
-
-    outExtras = pItemExtras;
-
-    SafeRelease(reinterpret_cast<IUnknown *&>(pWiaItemRoot));
     SafeRelease(reinterpret_cast<IUnknown *&>(pProp));
     SafeRelease(reinterpret_cast<IUnknown *&>(pEnum));
     SafeRelease(reinterpret_cast<IUnknown *&>(pWiaDevMgr));
@@ -314,15 +287,14 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    IWiaItemExtras *pExtras = nullptr;
-    if (!GetFirstWiaItemExtras(pExtras))
+    std::string sWiaDeviceId;
+    if (!GetFirstWiaDeviceId(sWiaDeviceId))
     {
         CoUninitialize();
         return 1;
     }
 
-    auto pTransport = std::make_shared<WiaTransport>(pExtras);
-    SafeRelease(reinterpret_cast<IUnknown *&>(pExtras));
+    auto pTransport = std::make_shared<WiaTransport>(sWiaDeviceId);
 
     SonyPTP3_Impl camCtrl;
     if (!camCtrl.SetPtpTransport(pTransport))

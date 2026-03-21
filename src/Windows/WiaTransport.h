@@ -3,6 +3,12 @@
 #include <CamCtrl/PTPTransport.h>
 #include <wia.h>
 
+#include <condition_variable>
+#include <deque>
+#include <future>
+#include <mutex>
+#include <thread>
+
 #include <windows.h>
 // Missing standard WIA interface definition for IWiaItemExtras
 // Sony cameras expose this interface for vendor passthrough, but it is not 
@@ -44,22 +50,19 @@ public:
  */
 
 /**
- * @brief Simple transport that wraps an @c IWiaItemExtras* and delegates
- * vendor escape operations to the demo helper functions.
+ * @brief WIA transport backed by a dedicated owner STA thread.
  *
- * The transport holds a COM reference to the provided @c IWiaItemExtras (calls
- * AddRef in the constructor and Release in the destructor).
+ * All COM object acquisition, Escape() execution, and COM object teardown happen
+ * on the same owner thread to avoid cross-apartment misuse of IWiaItemExtras.
  */
 class WiaTransport : public IPTPTransport
 {
 public:
-    // Takes ownership of a reference to pItemExtra (calls AddRef internally).
     /**
-     * @brief Construct a WiaTransport from an existing IWiaItemExtras pointer.
-     * @param pItemExtra Pointer to an IWiaItemExtras. The constructor will call
-     * AddRef on the pointer.
+     * @brief Construct a transport that owns a dedicated WIA/COM STA thread.
+     * @param sWiaDeviceId WIA device id used to reopen the device on the owner thread.
      */
-    explicit WiaTransport(IWiaItemExtras *pItemExtra);
+    explicit WiaTransport(std::string sWiaDeviceId);
     ~WiaTransport() override;
 
     /**
@@ -69,5 +72,30 @@ public:
                             const std::uint8_t *writeData, size_t writeSize) override;
 
 private:
-    IWiaItemExtras *pItemExtra_ = nullptr;
+    struct TEscapeTask
+    {
+        std::uint16_t opcode = 0;
+        std::vector<std::uint32_t> params;
+        std::vector<std::uint8_t> writeData;
+        std::promise<PTP_EscapeResult> promise;
+    };
+
+    void EnsureWorkerStarted();
+    void WorkerMain();
+    PTP_EscapeResult ExecuteEscapeOnOwnerThread(
+        std::uint16_t opcode,
+        const std::vector<std::uint32_t>& params,
+        const std::uint8_t* writeData,
+        size_t writeSize);
+
+    static PTP_EscapeResult BuildTooManyParamsError();
+
+private:
+    std::string m_sWiaDeviceId;
+    std::thread m_thOwner;
+    std::mutex m_mtx;
+    std::condition_variable m_cv;
+    std::deque<std::shared_ptr<TEscapeTask>> m_qTasks;
+    bool m_bStop = false;
+    bool m_bStarted = false;
 };

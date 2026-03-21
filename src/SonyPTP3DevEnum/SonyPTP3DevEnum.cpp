@@ -419,23 +419,9 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
         }
     }
 
-    IWiaItemExtras* pExtras = nullptr;
-    {
-        const HRESULT hr = pWiaItem->QueryInterface(
-            IID_IWiaItemExtras, reinterpret_cast<void**>(&pExtras));
-        SafeRelease(pWiaItem);
-        if (FAILED(hr) || !pExtras)
-        {
-            SafeRelease(pExtras);
-            SafeRelease(pWiaMgr);
-            if (bCOMInitHere) { CoUninitialize(); }
-            return nullptr;
-        }
-    }
-
     // ── Wrap transport and create SonyPTP3_Impl ────────────────────────────
-    auto spTransport = std::make_shared<WiaTransport>(pExtras);
-    SafeRelease(pExtras);
+    auto spTransport = std::make_shared<WiaTransport>(sWiaId);
+    SafeRelease(pWiaItem);
     SafeRelease(pWiaMgr);
 
     auto spSony = std::make_shared<SonyPTP3_Impl>();

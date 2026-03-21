@@ -1,5 +1,8 @@
 #include "WiaTransport.h"
 
+#include <algorithm>
+#include <string>
+
 // Helper to release COM objects
 template <class T>
 void SafeRelease(T **ppT)
@@ -11,50 +14,95 @@ void SafeRelease(T **ppT)
     }
 }
 
-WiaTransport::WiaTransport(IWiaItemExtras *pItemExtra) : pItemExtra_(pItemExtra)
-{
-    if (pItemExtra_)
-        pItemExtra_->AddRef();
-}
+WiaTransport::WiaTransport(std::string sWiaDeviceId)
+    : m_sWiaDeviceId(std::move(sWiaDeviceId))
+{}
 
 WiaTransport::~WiaTransport()
 {
-    if (pItemExtra_)
-        pItemExtra_->Release();
-    pItemExtra_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_bStop = true;
+    }
+    m_cv.notify_all();
+    if (m_thOwner.joinable())
+    {
+        m_thOwner.join();
+    }
 }
 
 PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<std::uint32_t> &params,
                                       const std::uint8_t *writeData, size_t writeSize)
 {
+    if (params.size() > PTP_MAX_PARAMS)
+    {
+        return BuildTooManyParamsError();
+    }
+
+    EnsureWorkerStarted();
+    return ExecuteEscapeOnOwnerThread(opcode, params, writeData, writeSize);
+}
+
+void WiaTransport::EnsureWorkerStarted()
+{
+    std::lock_guard<std::mutex> lk(m_mtx);
+    if (m_bStarted)
+    {
+        return;
+    }
+
+    m_bStarted = true;
+    m_thOwner = std::thread([this]()
+    {
+        WorkerMain();
+    });
+}
+
+PTP_EscapeResult WiaTransport::ExecuteEscapeOnOwnerThread(
+    std::uint16_t opcode,
+    const std::vector<std::uint32_t>& params,
+    const std::uint8_t* writeData,
+    size_t writeSize)
+{
+    auto spTask = std::make_shared<TEscapeTask>();
+    spTask->opcode = opcode;
+    spTask->params = params;
+    if (writeData != nullptr && writeSize > 0)
+    {
+        spTask->writeData.assign(writeData, writeData + writeSize);
+    }
+
+    auto future = spTask->promise.get_future();
+    {
+        std::lock_guard<std::mutex> lk(m_mtx);
+        m_qTasks.push_back(spTask);
+    }
+    m_cv.notify_all();
+    return future.get();
+}
+
+PTP_EscapeResult WiaTransport::BuildTooManyParamsError()
+{
     PTP_EscapeResult out;
-    out.hr = E_FAIL;
+    out.hr = E_INVALIDARG;
     out.responseCode = 0;
+    return out;
+}
 
-    if (!pItemExtra_)
-    {
-        out.hr = E_POINTER;
-        return out;
-    }
-
+void WiaTransport::WorkerMain()
+{
     bool bCOMInitHere = false;
+    const HRESULT hrCom = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
+    if (hrCom == S_OK)
     {
-        const HRESULT hrCom = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
-        if (hrCom == S_OK)
-        {
-            bCOMInitHere = true;
-        }
-        else if (hrCom == S_FALSE || hrCom == RPC_E_CHANGED_MODE)
-        {
-        }
-        else
-        {
-            out.hr = static_cast<std::int32_t>(hrCom);
-            return out;
-        }
+        bCOMInitHere = true;
+    }
+    else if (hrCom != S_FALSE)
+    {
+        // keep running, but all requests will fail below
     }
 
-#pragma pack(push, 1)
+    #pragma pack(push, 1)
     struct Local_PTP_VENDOR_DATA_IN
     {
         WORD OpCode;
@@ -78,64 +126,133 @@ PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<st
     const DWORD SIZEOF_REQUIRED_VENDOR_DATA_IN = sizeof(Local_PTP_VENDOR_DATA_IN) - 1;
     const DWORD SIZEOF_REQUIRED_VENDOR_DATA_OUT = sizeof(Local_PTP_VENDOR_DATA_OUT) - 1;
 
-    DWORD dwInSize = SIZEOF_REQUIRED_VENDOR_DATA_IN + writeSize;
-    Local_PTP_VENDOR_DATA_IN *pIn = (Local_PTP_VENDOR_DATA_IN *)CoTaskMemAlloc(dwInSize);
-    if (!pIn)
+    for (;;)
     {
-        out.hr = E_OUTOFMEMORY;
-        if (bCOMInitHere)
-            CoUninitialize();
-        return out;
-    }
-    ZeroMemory(pIn, dwInSize);
-
-    pIn->OpCode = opcode;
-    pIn->NextPhase = (writeSize > 0) ? PTP_NEXTPHASE_WRITE_DATA : PTP_NEXTPHASE_READ_DATA;
-    for (size_t i = 0; i < params.size() && i < PTP_MAX_PARAMS; ++i)
-    {
-        pIn->Params[i] = params[i];
-    }
-    pIn->NumParams = static_cast<DWORD>(params.size());
-    if (writeSize && writeData)
-    {
-        memcpy(pIn->VendorWriteData, writeData, writeSize);
-    }
-
-    DWORD dwOutSize = SIZEOF_REQUIRED_VENDOR_DATA_OUT + 0x8000;
-    Local_PTP_VENDOR_DATA_OUT *pOut = (Local_PTP_VENDOR_DATA_OUT *)CoTaskMemAlloc(dwOutSize);
-    if (!pOut)
-    {
-        CoTaskMemFree(pIn);
-        out.hr = E_OUTOFMEMORY;
-        if (bCOMInitHere)
-            CoUninitialize();
-        return out;
-    }
-    ZeroMemory(pOut, dwOutSize);
-
-    DWORD dwActualLocal = 0;
-
-    HRESULT hrLocal = pItemExtra_->Escape(ESCAPE_PTP_VENDOR_COMMAND, (BYTE *)pIn, dwInSize, (BYTE *)pOut, dwOutSize, &dwActualLocal);
-    out.hr = static_cast<std::int32_t>(hrLocal);
-
-    if (PTP_HR_SUCCEEDED(out.hr))
-    {
-        out.responseCode = pOut->ResponseCode;
-
-        DWORD dataOffset = SIZEOF_REQUIRED_VENDOR_DATA_OUT;
-        if (dwActualLocal > dataOffset)
+        std::shared_ptr<TEscapeTask> spTask;
         {
-            DWORD payloadSize = dwActualLocal - dataOffset;
-            out.payload.resize(payloadSize);
-            memcpy(out.payload.data(), pOut->VendorReadData, payloadSize);
+            std::unique_lock<std::mutex> lk(m_mtx);
+            m_cv.wait(lk, [this]()
+            {
+                return m_bStop || !m_qTasks.empty();
+            });
+            if (m_bStop && m_qTasks.empty())
+            {
+                break;
+            }
+            spTask = m_qTasks.front();
+            m_qTasks.pop_front();
         }
-    }
 
-    CoTaskMemFree(pIn);
-    CoTaskMemFree(pOut);
+        PTP_EscapeResult out;
+        out.hr = E_FAIL;
+        out.responseCode = 0;
+
+        bool bCOMInitReq = false;
+        if (hrCom == S_OK || hrCom == S_FALSE)
+        {
+            bCOMInitReq = true;
+        }
+        if (!bCOMInitReq)
+        {
+            out.hr = static_cast<std::int32_t>(hrCom);
+            spTask->promise.set_value(out);
+            continue;
+        }
+
+        const DWORD dwInSize = SIZEOF_REQUIRED_VENDOR_DATA_IN + static_cast<DWORD>(spTask->writeData.size());
+        Local_PTP_VENDOR_DATA_IN* pIn = (Local_PTP_VENDOR_DATA_IN*)CoTaskMemAlloc(dwInSize);
+        if (!pIn)
+        {
+            out.hr = E_OUTOFMEMORY;
+            spTask->promise.set_value(out);
+            continue;
+        }
+        ZeroMemory(pIn, dwInSize);
+
+        pIn->OpCode = spTask->opcode;
+        pIn->NextPhase = spTask->writeData.empty() ? PTP_NEXTPHASE_READ_DATA : PTP_NEXTPHASE_WRITE_DATA;
+        const DWORD dwParamCount = static_cast<DWORD>(std::min<std::size_t>(spTask->params.size(), PTP_MAX_PARAMS));
+        for (DWORD i = 0; i < dwParamCount; ++i)
+        {
+            pIn->Params[i] = spTask->params[i];
+        }
+        pIn->NumParams = dwParamCount;
+        if (!spTask->writeData.empty())
+        {
+            memcpy(pIn->VendorWriteData, spTask->writeData.data(), spTask->writeData.size());
+        }
+
+        const DWORD dwOutSize = SIZEOF_REQUIRED_VENDOR_DATA_OUT + 0x8000;
+        Local_PTP_VENDOR_DATA_OUT* pOut = (Local_PTP_VENDOR_DATA_OUT*)CoTaskMemAlloc(dwOutSize);
+        if (!pOut)
+        {
+            CoTaskMemFree(pIn);
+            out.hr = E_OUTOFMEMORY;
+            spTask->promise.set_value(out);
+            continue;
+        }
+        ZeroMemory(pOut, dwOutSize);
+
+        DWORD dwActualLocal = 0;
+        BSTR bstrId = SysAllocStringLen(nullptr, static_cast<UINT>(m_sWiaDeviceId.size()));
+        IWiaDevMgr* pWiaMgr = nullptr;
+        IWiaItem* pWiaItem = nullptr;
+        IWiaItemExtras* pItemExtra = nullptr;
+        HRESULT hrLocal = E_FAIL;
+
+        if (bstrId != nullptr)
+        {
+            MultiByteToWideChar(CP_UTF8, 0, m_sWiaDeviceId.c_str(), -1, bstrId, static_cast<int>(m_sWiaDeviceId.size() + 1));
+            if (SUCCEEDED(CoCreateInstance(
+                    CLSID_WiaDevMgr,
+                    nullptr,
+                    CLSCTX_LOCAL_SERVER,
+                    IID_IWiaDevMgr,
+                    reinterpret_cast<void**>(&pWiaMgr))) && pWiaMgr != nullptr)
+            {
+                if (SUCCEEDED(pWiaMgr->CreateDevice(bstrId, &pWiaItem)) && pWiaItem != nullptr)
+                {
+                    if (SUCCEEDED(pWiaItem->QueryInterface(IID_IWiaItemExtras, reinterpret_cast<void**>(&pItemExtra))) && pItemExtra != nullptr)
+                    {
+                        hrLocal = pItemExtra->Escape(
+                            ESCAPE_PTP_VENDOR_COMMAND,
+                            reinterpret_cast<BYTE*>(pIn),
+                            dwInSize,
+                            reinterpret_cast<BYTE*>(pOut),
+                            dwOutSize,
+                            &dwActualLocal);
+                    }
+                }
+            }
+        }
+        out.hr = static_cast<std::int32_t>(hrLocal);
+
+        if (PTP_HR_SUCCEEDED(out.hr))
+        {
+            out.responseCode = pOut->ResponseCode;
+            const DWORD dataOffset = SIZEOF_REQUIRED_VENDOR_DATA_OUT;
+            if (dwActualLocal > dataOffset)
+            {
+                const DWORD payloadSize = dwActualLocal - dataOffset;
+                out.payload.resize(payloadSize);
+                memcpy(out.payload.data(), pOut->VendorReadData, payloadSize);
+            }
+        }
+
+        CoTaskMemFree(pIn);
+        CoTaskMemFree(pOut);
+        SafeRelease(&pItemExtra);
+        SafeRelease(&pWiaItem);
+        SafeRelease(&pWiaMgr);
+        if (bstrId != nullptr)
+        {
+            SysFreeString(bstrId);
+        }
+        spTask->promise.set_value(out);
+    }
 
     if (bCOMInitHere)
+    {
         CoUninitialize();
-
-    return out;
+    }
 }

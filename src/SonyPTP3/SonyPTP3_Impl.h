@@ -46,7 +46,7 @@ public:
      * @param transport Shared pointer to an @c IPTPTransport implementation.
      * @return true on success.
      */
-    bool SetPtpTransport(IPTPTransportPtr transport);
+    bool SetPtpTransport(IPTPTransportPtr transport) override;
     void Disconnect();
     bool IsConnected() const;
 
@@ -61,7 +61,7 @@ public:
     bool MovieRecStart() override;
     bool MovieRecEnd() override;
     // Movie recording state accessor
-    bool IsMovieRecording() const;
+    bool IsMovieRecording() const override;
     /**
      * @brief Change exposure parameters using physical values.
      * @param params Desired exposure parameters; implementations may apply a subset
