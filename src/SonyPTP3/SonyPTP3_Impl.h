@@ -42,7 +42,8 @@ public:
      * @brief Connect using an externally-provided transport implementation.
      *
      * Ownership of the @c IPTPTransportPtr is shared; the transport instance
-     * must remain valid for the lifetime of the connection.
+	 * may outlive an active session and be reused across Disconnect()/Connect()
+	 * cycles. Passing @c nullptr explicitly removes the current transport.
      * @param transport Shared pointer to an @c IPTPTransport implementation.
      * @return true on success.
      */
@@ -117,9 +118,10 @@ private:
      * State transitions:
      * - Disconnected -> TransportReady: SetPtpTransport() is called with a valid transport.
      * - TransportReady -> SessionOpen: Connect() successfully completes the PTP handshake.
-     * - SessionOpen -> Disconnected: Disconnect() is called, or transport is removed.
-     * - TransportReady -> Disconnected: Disconnect() is called, or transport is removed.
-     * - Any state -> Disconnected: Connect() fails during handshake.
+	 * - SessionOpen -> TransportReady: Disconnect() closes the active session but retains transport.
+	 * - TransportReady -> Disconnected: SetPtpTransport(nullptr) is called.
+	 * - SessionOpen -> Disconnected: active session is closed and transport is explicitly removed.
+	 * - Any state -> Disconnected: Connect() fails and no transport remains available.
      */
     enum class ConnectionState {
         Disconnected,   ///< No transport, or session closed/failed.

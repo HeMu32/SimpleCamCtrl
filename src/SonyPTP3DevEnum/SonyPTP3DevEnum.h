@@ -47,9 +47,12 @@ struct TSonyPTP3OpenParams
  *
  * ### OpenByIndex()
  * Opens the WIA device via @c IWiaDevMgr::CreateDevice(), wraps the
- * resulting @c IWiaItemExtras in a @c WiaTransport, constructs and connects
- * a @c SonyPTP3_Impl.  The returned opaque handle wraps a
+ * resulting WIA identity in a @c WiaTransport, constructs and connects a
+ * @c SonyPTP3_Impl. The returned opaque handle wraps a
  * @c std::shared_ptr<SonyPTP3_Impl>; cast with @c std::static_pointer_cast.
+ *
+ * The returned object is already connected, but its transport remains attached
+ * after @c Disconnect(), allowing later reconnect attempts on the same object.
  *
  * @note Windows-only.  All WIA/COM headers are internal to the .cpp.
  */

@@ -126,6 +126,13 @@ bool SonyPTP3_Impl::Connect()
         return false;
     }
 
+    if (connection_state_ == ConnectionState::SessionOpen)
+    {
+        return true;
+    }
+
+    connection_state_ = ConnectionState::TransportReady;
+
     auto call = [&](std::uint16_t opcode, const std::vector<std::uint32_t> &params,
                     PTP_EscapeResult &out_res) -> bool
     {
@@ -234,13 +241,15 @@ bool SonyPTP3_Impl::Connect()
             std::this_thread::sleep_for(std::chrono::milliseconds(_CONN_RETRY_TIMEOUT_MS));
             if (!connect_once_with_detail(last_res))
             {
-                connection_state_ = ConnectionState::Disconnected;
+                connection_state_ = transport_ ? ConnectionState::TransportReady
+                                               : ConnectionState::Disconnected;
                 return false;
             }
         }
         else
         {
-            connection_state_ = ConnectionState::Disconnected;
+            connection_state_ = transport_ ? ConnectionState::TransportReady
+                                           : ConnectionState::Disconnected;
             return false;
         }
     }
@@ -255,7 +264,32 @@ bool SonyPTP3_Impl::SetPtpTransport(IPTPTransportPtr transport)
     std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
     if (!lock) return false;
 
+    if (transport_.get() == transport.get())
+    {
+        if (!transport_)
+        {
+            connection_state_ = ConnectionState::Disconnected;
+            has_status_ = false;
+            return false;
+        }
+
+        if (connection_state_ != ConnectionState::SessionOpen)
+        {
+            connection_state_ = ConnectionState::TransportReady;
+        }
+        return true;
+    }
+
+    if (transport_ && connection_state_ == ConnectionState::SessionOpen)
+    {
+        ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonUp);
+        ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonUp);
+        PTP_EscapeResult close_res = transport_->Escape(sonyptp3::PTP_OC_CloseSession, {}, nullptr, 0);
+        (void)close_res;
+    }
+
     transport_ = std::move(transport);
+    has_status_ = false;
     if (transport_)
     {
         connection_state_ = ConnectionState::TransportReady;
@@ -282,9 +316,9 @@ void SonyPTP3_Impl::Disconnect()
         (void)r;
     }
 
-    connection_state_ = ConnectionState::Disconnected;
+    connection_state_ = transport_ ? ConnectionState::TransportReady
+                                   : ConnectionState::Disconnected;
     has_status_ = false;
-    transport_.reset();
 }
 
 bool SonyPTP3_Impl::IsConnected() const
