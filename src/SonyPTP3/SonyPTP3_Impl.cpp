@@ -3,10 +3,24 @@
 
 #include <cmath>
 #include <cstring> // for std::memcpy
+#include <iostream>
 #include <thread>
 
 namespace
 {
+    void LogSonyPTP3ImplLifecycle(const char* pszStage, const SonyPTP3_Impl* pSelf)
+    {
+#if defined(_DEBUG)
+        std::cerr << "[Lifecycle][SonyPTP3_Impl] " << pszStage
+                  << " this=" << pSelf
+                  << " thread=" << std::this_thread::get_id()
+                  << std::endl;
+#else
+        (void)pszStage;
+        (void)pSelf;
+#endif
+    }
+
     constexpr std::uint32_t kButtonDown = 0x0002;
     constexpr std::uint32_t kButtonUp = 0x0001;
 
@@ -117,17 +131,24 @@ SonyPTP3_Impl::~SonyPTP3_Impl() { Disconnect(); }
 
 bool SonyPTP3_Impl::Connect()
 {
+    LogSonyPTP3ImplLifecycle("Connect begin", this);
     std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_CONN_TIMEOUT_MS));
-    if (!lock) return false;
+    if (!lock)
+    {
+        LogSonyPTP3ImplLifecycle("Connect end: api lock timeout", this);
+        return false;
+    }
     
     if (!transport_)
     {
         connection_state_ = ConnectionState::Disconnected;
+        LogSonyPTP3ImplLifecycle("Connect end: no transport", this);
         return false;
     }
 
     if (connection_state_ == ConnectionState::SessionOpen)
     {
+        LogSonyPTP3ImplLifecycle("Connect end: already open", this);
         return true;
     }
 
@@ -243,6 +264,7 @@ bool SonyPTP3_Impl::Connect()
             {
                 connection_state_ = transport_ ? ConnectionState::TransportReady
                                                : ConnectionState::Disconnected;
+                LogSonyPTP3ImplLifecycle("Connect end: retry failed", this);
                 return false;
             }
         }
@@ -250,12 +272,14 @@ bool SonyPTP3_Impl::Connect()
         {
             connection_state_ = transport_ ? ConnectionState::TransportReady
                                            : ConnectionState::Disconnected;
+            LogSonyPTP3ImplLifecycle("Connect end: initial connect failed", this);
             return false;
         }
     }
 
     connection_state_ = ConnectionState::SessionOpen;
     has_status_ = false;
+    LogSonyPTP3ImplLifecycle("Connect end: success", this);
     return true;
 }
 
@@ -304,8 +328,13 @@ bool SonyPTP3_Impl::SetPtpTransport(IPTPTransportPtr transport)
 
 void SonyPTP3_Impl::Disconnect()
 {
+    LogSonyPTP3ImplLifecycle("Disconnect begin", this);
     std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
-    if (!lock) return;
+    if (!lock)
+    {
+        LogSonyPTP3ImplLifecycle("Disconnect end: api lock timeout", this);
+        return;
+    }
 
     if (transport_ && connection_state_ == ConnectionState::SessionOpen)
     {
@@ -319,6 +348,7 @@ void SonyPTP3_Impl::Disconnect()
     connection_state_ = transport_ ? ConnectionState::TransportReady
                                    : ConnectionState::Disconnected;
     has_status_ = false;
+    LogSonyPTP3ImplLifecycle("Disconnect end", this);
 }
 
 bool SonyPTP3_Impl::IsConnected() const

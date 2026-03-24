@@ -4,6 +4,7 @@
 #include <wia.h>
 
 #include <condition_variable>
+#include <chrono>
 #include <deque>
 #include <future>
 #include <mutex>
@@ -91,6 +92,8 @@ private:
     static PTP_EscapeResult BuildTooManyParamsError();
 
 private:
+    static constexpr std::chrono::milliseconds kEscapeWaitTimeout{2000};
+
     std::string m_sWiaDeviceId;
     std::thread m_thOwner;
     std::mutex m_mtx;

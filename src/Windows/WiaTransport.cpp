@@ -1,7 +1,10 @@
 #include "WiaTransport.h"
 
 #include <algorithm>
+#include <chrono>
+#include <iostream>
 #include <string>
+#include <thread>
 
 // Helper to release COM objects
 template <class T>
@@ -14,12 +17,28 @@ void SafeRelease(T **ppT)
     }
 }
 
+void LogWiaTransportLifecycle(const char* pszStage, const WiaTransport* pSelf)
+{
+#if defined(_DEBUG)
+    std::cerr << "[Lifecycle][WiaTransport] " << pszStage
+              << " this=" << pSelf
+              << " thread=" << std::this_thread::get_id()
+              << std::endl;
+#else
+    (void)pszStage;
+    (void)pSelf;
+#endif
+}
+
 WiaTransport::WiaTransport(std::string sWiaDeviceId)
     : m_sWiaDeviceId(std::move(sWiaDeviceId))
-{}
+{
+    LogWiaTransportLifecycle("ctor", this);
+}
 
 WiaTransport::~WiaTransport()
 {
+    LogWiaTransportLifecycle("dtor begin", this);
     {
         std::lock_guard<std::mutex> lk(m_mtx);
         m_bStop = true;
@@ -27,8 +46,10 @@ WiaTransport::~WiaTransport()
     m_cv.notify_all();
     if (m_thOwner.joinable())
     {
+        LogWiaTransportLifecycle("dtor waiting worker join", this);
         m_thOwner.join();
     }
+    LogWiaTransportLifecycle("dtor end", this);
 }
 
 PTP_EscapeResult WiaTransport::Escape(std::uint16_t opcode, const std::vector<std::uint32_t> &params,
@@ -52,6 +73,7 @@ void WiaTransport::EnsureWorkerStarted()
     }
 
     m_bStarted = true;
+    LogWiaTransportLifecycle("EnsureWorkerStarted spawn", this);
     m_thOwner = std::thread([this]()
     {
         WorkerMain();
@@ -77,8 +99,20 @@ PTP_EscapeResult WiaTransport::ExecuteEscapeOnOwnerThread(
         std::lock_guard<std::mutex> lk(m_mtx);
         m_qTasks.push_back(spTask);
     }
+    LogWiaTransportLifecycle("ExecuteEscape enqueue", this);
     m_cv.notify_all();
-    return future.get();
+
+    if (future.wait_for(kEscapeWaitTimeout) == std::future_status::ready)
+    {
+        LogWiaTransportLifecycle("ExecuteEscape ready", this);
+        return future.get();
+    }
+
+    LogWiaTransportLifecycle("ExecuteEscape timeout", this);
+    PTP_EscapeResult stTimeout;
+    stTimeout.hr = HRESULT_FROM_WIN32(WAIT_TIMEOUT);
+    stTimeout.responseCode = 0;
+    return stTimeout;
 }
 
 PTP_EscapeResult WiaTransport::BuildTooManyParamsError()
@@ -91,6 +125,7 @@ PTP_EscapeResult WiaTransport::BuildTooManyParamsError()
 
 void WiaTransport::WorkerMain()
 {
+    LogWiaTransportLifecycle("WorkerMain begin", this);
     bool bCOMInitHere = false;
     const HRESULT hrCom = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
     if (hrCom == S_OK)
@@ -146,6 +181,8 @@ void WiaTransport::WorkerMain()
         PTP_EscapeResult out;
         out.hr = E_FAIL;
         out.responseCode = 0;
+
+        LogWiaTransportLifecycle("WorkerMain task begin", this);
 
         bool bCOMInitReq = false;
         if (hrCom == S_OK || hrCom == S_FALSE)
@@ -214,6 +251,7 @@ void WiaTransport::WorkerMain()
                 {
                     if (SUCCEEDED(pWiaItem->QueryInterface(IID_IWiaItemExtras, reinterpret_cast<void**>(&pItemExtra))) && pItemExtra != nullptr)
                     {
+                        LogWiaTransportLifecycle("WorkerMain Escape call begin", this);
                         hrLocal = pItemExtra->Escape(
                             ESCAPE_PTP_VENDOR_COMMAND,
                             reinterpret_cast<BYTE*>(pIn),
@@ -221,6 +259,7 @@ void WiaTransport::WorkerMain()
                             reinterpret_cast<BYTE*>(pOut),
                             dwOutSize,
                             &dwActualLocal);
+                        LogWiaTransportLifecycle("WorkerMain Escape call end", this);
                     }
                 }
             }
@@ -249,10 +288,12 @@ void WiaTransport::WorkerMain()
             SysFreeString(bstrId);
         }
         spTask->promise.set_value(out);
+        LogWiaTransportLifecycle("WorkerMain task end", this);
     }
 
     if (bCOMInitHere)
     {
         CoUninitialize();
     }
+    LogWiaTransportLifecycle("WorkerMain end", this);
 }

@@ -12,8 +12,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include "SonyPTP3DevEnum.h"
@@ -26,6 +28,17 @@
 
 namespace
 {
+
+void LogSonyPTP3DevEnumLifecycle(const char* pszStage)
+{
+#if defined(_DEBUG)
+    std::cerr << "[Lifecycle][SonyPTP3DevEnum] " << pszStage
+              << " thread=" << std::this_thread::get_id()
+              << std::endl;
+#else
+    (void)pszStage;
+#endif
+}
 
 /**
  * @brief Release a COM pointer and null the original variable.
@@ -342,9 +355,11 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
     std::int32_t               nDeviceIndex,
     const TSonyPTP3OpenParams& stOpenParams)
 {
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex begin");
     if (nDeviceIndex < 0 ||
         nDeviceIndex >= static_cast<std::int32_t>(m_vecDeviceInfo.size()))
     {
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex end: invalid index");
         return nullptr;
     }
 
@@ -362,6 +377,7 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
 
     if (sWiaId.empty())
     {
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex end: empty wia id");
         return nullptr;
     }
 
@@ -380,9 +396,11 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
         }
         else
         {
+            LogSonyPTP3DevEnumLifecycle("OpenByIndex end: CoInitializeEx failed");
             return nullptr;
         }
     }
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: COM init done");
 
     // ── Open device via WIA ────────────────────────────────────────────────
     IWiaDevMgr* pWiaMgr = nullptr;
@@ -394,15 +412,18 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
         {
             SafeRelease(pWiaMgr);
             if (bCOMInitHere) { CoUninitialize(); }
+            LogSonyPTP3DevEnumLifecycle("OpenByIndex end: CoCreateInstance failed");
             return nullptr;
         }
     }
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: CoCreateInstance ok");
 
     BSTR bstrId = Utf8ToBstr(sWiaId);
     if (!bstrId)
     {
         SafeRelease(pWiaMgr);
         if (bCOMInitHere) { CoUninitialize(); }
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex end: Utf8ToBstr failed");
         return nullptr;
     }
 
@@ -415,9 +436,11 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
             SafeRelease(pWiaItem);
             SafeRelease(pWiaMgr);
             if (bCOMInitHere) { CoUninitialize(); }
+            LogSonyPTP3DevEnumLifecycle("OpenByIndex end: CreateDevice failed");
             return nullptr;
         }
     }
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: CreateDevice ok");
 
     // ── Wrap transport and create SonyPTP3_Impl ────────────────────────────
     auto spTransport = std::make_shared<WiaTransport>(sWiaId);
@@ -428,21 +451,29 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
     if (!spSony->SetPtpTransport(spTransport))
     {
         if (bCOMInitHere) { CoUninitialize(); }
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex end: SetPtpTransport failed");
         return nullptr;
     }
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: SetPtpTransport ok");
 
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: Sony Connect begin");
     if (!spSony->Connect())
     {
         if (bCOMInitHere) { CoUninitialize(); }
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex end: Sony Connect failed");
         return nullptr;
     }
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: Sony Connect ok");
 
     if (stOpenParams.bAutoUpdateStatus)
     {
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: UpdateStatus begin");
         spSony->UpdateStatus();
+        LogSonyPTP3DevEnumLifecycle("OpenByIndex stage: UpdateStatus end");
     }
 
     if (bCOMInitHere) { CoUninitialize(); }
+    LogSonyPTP3DevEnumLifecycle("OpenByIndex end: success");
 
     return std::static_pointer_cast<void>(spSony);
 }
