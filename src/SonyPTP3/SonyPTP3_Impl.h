@@ -5,9 +5,17 @@
 /// @brief Timeout for retry (disconnect-connect process)
 #define _CONN_RETRY_TIMEOUT_MS 120
 
+/// @brief Polling worker interval and timeout (ms)
+#define _POLLING_WORKER_INTER_MS 50
+#define _POLLING_WORKER_TIMEOUT_MS 500
+
 #include <cstdint>
+#include <atomic>
+#include <condition_variable>
+#include <future>
 #include <mutex>
 #include <string>
+#include <thread>
 
 #include <CamCtrl/ISimpleCamCtrl.h>
 #include <CamCtrl/PTPTransport.h>
@@ -52,6 +60,17 @@ public:
     bool IsConnected() const;
 
     // ISimpleCamCtrl
+    /**
+     * @brief Refresh the cached camera status directly from device.
+     *
+     * SonyPTP3_Impl internally runs a periodic polling worker (with
+     * _POLLING_WORKER_INTER_MS interval and _POLLING_WORKER_TIMEOUT_MS timeout)
+     * that keeps cache_ updated automatically. In normal operation (worker
+     * mode), callers may not need to call UpdateStatus() explicitly. This
+     * method is still provided for manual on-demand refresh.
+     *
+     * @return true on success.
+     */
     bool UpdateStatus() override;
     bool GetExposureParams(ExposureParams &out_params) const override;
     std::uint32_t GetExposureMode() const override;
@@ -93,6 +112,18 @@ private:
      */
     bool UpdateCacheFromDataManager();
 
+    /**
+     * @brief Start/stop and run the polling worker thread.
+     */
+    bool StartPollingWorker();
+    void StopPollingWorker();
+    void PollingWorkerLoop();
+
+    /**
+     * @brief Internal helper for polling worker (timeout-aware caller should use std::future).
+     */
+    bool UpdateStatusInternal();
+
     // Helper wrappers for underlying PTP operations.
     /**
      * @brief Send a control/command to a device property (SDIOControlDevice).
@@ -130,10 +161,17 @@ private:
     };
 
     mutable std::timed_mutex api_mutex_; ///< Main lock ensuring thread safety across all public APIs and underlying transport calls.
-    std::mutex cache_mutex_;       ///< (Optional) legacy cache lock, now superseded by api_mutex_ but kept for structure.
+    mutable std::mutex cache_mutex_;       ///< cache lock used by getters and worker-safe cache updates.
     StateCache cache_;
 
     ConnectionState connection_state_ = ConnectionState::Disconnected;
+
+    // Worker thread for periodic status polling.
+    std::atomic<bool> polling_worker_running_{false};
+    std::thread polling_worker_thread_;
+    std::mutex polling_worker_mutex_;
+    std::condition_variable polling_worker_cv_;
+    std::future<bool> polling_worker_future_; // In-flight UpdateStatus operation
 
     // Indicates whether the local `cache_` has been successfully populated with data
     // from the device at least once (e.g., via UpdateStatus).

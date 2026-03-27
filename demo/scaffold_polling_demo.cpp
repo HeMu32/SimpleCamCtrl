@@ -314,6 +314,7 @@ int main(int argc, char *argv[])
     ApiStat statUpdateStatus("UpdateStatus");
     ApiStat statGetExposure("GetExposureParams");
     ApiStat statGetMode("GetExposureMode");
+    ApiStat statGetFocal("GetFocalLengthFromCache");
     ApiStat statSetExposure("SetExposureParams");
 
     SonyPTP3_Impl::ExposureParams stLastParams{};
@@ -349,6 +350,11 @@ int main(int argc, char *argv[])
         {
             stLastParams = stCurrentParams;
             bHaveLastParams = true;
+
+            // we consider focal length already from cache via GetExposureParams
+            const double dFocal = stCurrentParams.focal_length;
+            statGetFocal.Add(true, 0);
+            (void)dFocal; // for inspection in printout below
         }
 
         const auto tpModeBegin = std::chrono::steady_clock::now();
@@ -372,7 +378,13 @@ int main(int argc, char *argv[])
             statUpdateStatus.Print();
             statGetExposure.Print();
             statGetMode.Print();
+            statGetFocal.Print();
             statSetExposure.Print();
+
+            if (bHaveLastParams)
+            {
+                std::cout << "Latest focal length = " << stLastParams.focal_length << " mm\n";
+            }
             std::cout << std::flush;
         }
     }
@@ -381,7 +393,13 @@ int main(int argc, char *argv[])
     statUpdateStatus.Print();
     statGetExposure.Print();
     statGetMode.Print();
+    statGetFocal.Print();
     statSetExposure.Print();
+
+    if (bHaveLastParams)
+    {
+        std::cout << "Final focal length = " << stLastParams.focal_length << " mm\n";
+    }
 
     camCtrl.Disconnect();
     CoUninitialize();

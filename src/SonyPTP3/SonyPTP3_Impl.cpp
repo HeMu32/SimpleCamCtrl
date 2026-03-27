@@ -125,9 +125,16 @@ namespace
     }
 }
 
-SonyPTP3_Impl::SonyPTP3_Impl() = default;
+SonyPTP3_Impl::SonyPTP3_Impl()
+{
+    StartPollingWorker();
+}
 
-SonyPTP3_Impl::~SonyPTP3_Impl() { Disconnect(); }
+SonyPTP3_Impl::~SonyPTP3_Impl()
+{
+    StopPollingWorker();
+    Disconnect();
+}
 
 bool SonyPTP3_Impl::Connect()
 {
@@ -390,6 +397,7 @@ bool SonyPTP3_Impl::UpdateStatus()
     const auto itIso = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_ISO));
     const auto itExpComp = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_EXPOSURE_COMPENSATION));
     const auto itExpMode = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_EXPOSURE_MODE));
+    const auto itFocalLength = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_LENGTH));
     const auto itMovie = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_MOVIE_REC));
 
     const bool bHasAnyExposureField =
@@ -397,38 +405,49 @@ bool SonyPTP3_Impl::UpdateStatus()
         (itFNo != props.end()) ||
         (itIso != props.end()) ||
         (itExpComp != props.end()) ||
-        (itExpMode != props.end());
+        (itExpMode != props.end()) ||
+        (itFocalLength != props.end());
 
     if (!bHasAnyExposureField && !has_status_)
     {
         return false;
     }
 
-    if (itShutter != props.end())
+    // Use cache_mutex_ for short-duration updates to avoid blocking simple getters.
     {
-        cache_.exposure_params.shutter_speed =
-            DecodeShutterSpeedReciprocal(static_cast<std::uint32_t>(itShutter->second));
-    }
-    if (itFNo != props.end())
-    {
-        cache_.exposure_params.f_number =
-            DecodeFNumber(static_cast<std::uint16_t>(itFNo->second));
-    }
-    if (itIso != props.end())
-    {
-        cache_.exposure_params.iso = static_cast<std::uint32_t>(itIso->second);
-    }
-    if (itExpComp != props.end())
-    {
-        cache_.exposure_params.exposure_comp = static_cast<std::int32_t>(itExpComp->second);
-    }
-    if (itExpMode != props.end())
-    {
-        cache_.exposure_mode = static_cast<std::uint32_t>(itExpMode->second);
-    }
-    if (itMovie != props.end())
-    {
-        cache_.movie_recording = (itMovie->second != 0);
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+
+        if (itShutter != props.end())
+        {
+            cache_.exposure_params.shutter_speed =
+                DecodeShutterSpeedReciprocal(static_cast<std::uint32_t>(itShutter->second));
+        }
+        if (itFNo != props.end())
+        {
+            cache_.exposure_params.f_number =
+                DecodeFNumber(static_cast<std::uint16_t>(itFNo->second));
+        }
+        if (itIso != props.end())
+        {
+            cache_.exposure_params.iso = static_cast<std::uint32_t>(itIso->second);
+        }
+        if (itExpComp != props.end())
+        {
+            cache_.exposure_params.exposure_comp = static_cast<std::int32_t>(itExpComp->second);
+        }
+        if (itExpMode != props.end())
+        {
+            cache_.exposure_mode = static_cast<std::uint32_t>(itExpMode->second);
+        }
+        if (itFocalLength != props.end())
+        {
+            // Focal length is typically reported in 1/100th mm for standard PTP.
+            cache_.exposure_params.focal_length = static_cast<double>(itFocalLength->second) / 100.0;
+        }
+        if (itMovie != props.end())
+        {
+            cache_.movie_recording = (itMovie->second != 0);
+        }
     }
 
     if (bHasAnyExposureField)
@@ -440,9 +459,7 @@ bool SonyPTP3_Impl::UpdateStatus()
 
 bool SonyPTP3_Impl::GetExposureParams(ExposureParams &out_params) const
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
-    if (!lock) return false;
-
+    std::lock_guard<std::mutex> lock(cache_mutex_);
     if (!has_status_)
     {
         return false;
@@ -453,9 +470,7 @@ bool SonyPTP3_Impl::GetExposureParams(ExposureParams &out_params) const
 
 std::uint32_t SonyPTP3_Impl::GetExposureMode() const
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
-    if (!lock) return 0;
-
+    std::lock_guard<std::mutex> lock(cache_mutex_);
     return cache_.exposure_mode;
 }
 
@@ -551,6 +566,110 @@ bool SonyPTP3_Impl::SetExposureParams(const ExposureParams &params)
 bool SonyPTP3_Impl::EnsureConnected()
 {
     return (connection_state_ == ConnectionState::SessionOpen) && transport_;
+}
+
+bool SonyPTP3_Impl::UpdateStatusInternal()
+{
+    // This internal method is expected to not be called directly from clients;
+    // it is used by the polling worker, and is allowed to run concurrently with
+    // the externals via the same locking policy as UpdateStatus().
+    return UpdateStatus();
+}
+
+bool SonyPTP3_Impl::StartPollingWorker()
+{
+    bool expected = false;
+    if (!polling_worker_running_.compare_exchange_strong(expected, true))
+    {
+        return false; // already running
+    }
+
+    LogSonyPTP3ImplLifecycle("PollingWorker start", this);
+    polling_worker_thread_ = std::thread(&SonyPTP3_Impl::PollingWorkerLoop, this);
+    return true;
+}
+
+void SonyPTP3_Impl::StopPollingWorker()
+{
+    bool expected = true;
+    if (!polling_worker_running_.compare_exchange_strong(expected, false))
+    {
+        return; // already stopped
+    }
+
+    LogSonyPTP3ImplLifecycle("PollingWorker stop", this);
+    polling_worker_cv_.notify_all();
+    if (polling_worker_thread_.joinable())
+    {
+        polling_worker_thread_.join();
+    }
+
+    // Reset any pending future so destructor/stop doesn't block on stale state.
+    if (polling_worker_future_.valid())
+    {
+        // if still running, we cannot cancel, but future object can be reset.
+        polling_worker_future_ = std::future<bool>();
+    }
+}
+
+void SonyPTP3_Impl::PollingWorkerLoop()
+{
+    using namespace std::chrono;
+
+    LogSonyPTP3ImplLifecycle("PollingWorker loop begin", this);
+    while (polling_worker_running_)
+    {
+        const auto cycle_start = steady_clock::now();
+
+        // Check previous update completion
+        if (polling_worker_future_.valid())
+        {
+            if (polling_worker_future_.wait_for(milliseconds(0)) == std::future_status::ready)
+            {
+                try
+                {
+                    (void)polling_worker_future_.get();
+                }
+                catch (...) { }
+                polling_worker_future_ = std::future<bool>();
+            }
+        }
+
+        if (!polling_worker_future_.valid())
+        {
+            polling_worker_future_ = std::async(std::launch::async, [this]() -> bool {
+                return UpdateStatusInternal();
+            });
+        }
+
+        if (polling_worker_future_.valid())
+        {
+            if (polling_worker_future_.wait_for(milliseconds(_POLLING_WORKER_TIMEOUT_MS)) == std::future_status::ready)
+            {
+                try
+                {
+                    (void)polling_worker_future_.get();
+                }
+                catch (...) { }
+                polling_worker_future_ = std::future<bool>();
+            }
+            else
+            {
+                LogSonyPTP3ImplLifecycle("PollingWorker UpdateStatus timeout", this);
+            }
+            // if timeout, do not block on result; continue next loop
+        }
+
+        const auto cycle_end = steady_clock::now();
+        const auto elapsed = duration_cast<milliseconds>(cycle_end - cycle_start);
+        const auto sleep_time = milliseconds(_POLLING_WORKER_INTER_MS) - elapsed;
+
+        std::unique_lock<std::mutex> lock(polling_worker_mutex_);
+        if (sleep_time.count() > 0)
+        {
+            polling_worker_cv_.wait_for(lock, sleep_time, [this]() { return !polling_worker_running_; });
+        }
+    }
 }
 
 bool SonyPTP3_Impl::UpdateCacheFromDataManager()

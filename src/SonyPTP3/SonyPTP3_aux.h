@@ -51,6 +51,7 @@ namespace sonyptp3
     constexpr std::uint32_t DPC_ISO = 0xD21E;
     constexpr std::uint32_t DPC_EXPOSURE_COMPENSATION = 0x5010;
     constexpr std::uint32_t DPC_EXPOSURE_MODE = 0x500E;
+    constexpr std::uint32_t DPC_FOCAL_LENGTH = 0xD2D6; // Sony extension approx (if present)
 
     // =========================================================================
     // Utilities
