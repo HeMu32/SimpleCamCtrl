@@ -51,7 +51,10 @@ namespace sonyptp3
     constexpr std::uint32_t DPC_ISO = 0xD21E;
     constexpr std::uint32_t DPC_EXPOSURE_COMPENSATION = 0x5010;
     constexpr std::uint32_t DPC_EXPOSURE_MODE = 0x500E;
-    constexpr std::uint32_t DPC_FOCAL_LENGTH = 0xD2D6; // Sony extension approx (if present)
+    constexpr std::uint32_t DPC_FOCAL_LENGTH = 0x5008; // Standard PTP (if available)
+    constexpr std::uint32_t DPC_FOCAL_LENGTH_STEADY_SHOT = 0xD193; // Image stabilization steady shot focal length
+    constexpr std::uint32_t DPC_FOCAL_LENGTH_VENDOR = 0xD2D6; // Sony vendor extension fallback
+    constexpr std::uint32_t DPC_ZOOM_DISTANCE = 0xD00B; // Zoom distance (0.001 mm unit)
 
     // =========================================================================
     // Utilities

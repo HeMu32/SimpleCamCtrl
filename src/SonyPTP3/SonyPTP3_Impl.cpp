@@ -376,8 +376,21 @@ bool SonyPTP3_Impl::UpdateStatus()
         return false;
     }
 
-    PTP_EscapeResult res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {},
+    // Prefer requesting full property snapshot with extended-device-property
+    // option enabled (per PTP3 spec: param1=0, param2=1). Fall back to older
+    // calling conventions for compatibility with legacy bodies/firmware.
+    PTP_EscapeResult res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {0U, 1U},
                                               nullptr, 0);
+    if (PTP_HR_FAILED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
+    {
+        res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {0U},
+                                 nullptr, 0);
+    }
+    if (PTP_HR_FAILED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
+    {
+        res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {},
+                                 nullptr, 0);
+    }
     if (PTP_HR_FAILED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
     {
         return false;
@@ -398,6 +411,9 @@ bool SonyPTP3_Impl::UpdateStatus()
     const auto itExpComp = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_EXPOSURE_COMPENSATION));
     const auto itExpMode = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_EXPOSURE_MODE));
     const auto itFocalLength = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_LENGTH));
+    const auto itFocalLengthSteadyShot = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_LENGTH_STEADY_SHOT));
+    const auto itFocalLengthVendor = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_LENGTH_VENDOR));
+    const auto itZoomDistance = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_ZOOM_DISTANCE));
     const auto itMovie = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_MOVIE_REC));
 
     const bool bHasAnyExposureField =
@@ -406,7 +422,10 @@ bool SonyPTP3_Impl::UpdateStatus()
         (itIso != props.end()) ||
         (itExpComp != props.end()) ||
         (itExpMode != props.end()) ||
-        (itFocalLength != props.end());
+        (itFocalLength != props.end()) ||
+        (itFocalLengthSteadyShot != props.end()) ||
+        (itFocalLengthVendor != props.end()) ||
+        (itZoomDistance != props.end());
 
     if (!bHasAnyExposureField && !has_status_)
     {
@@ -439,15 +458,48 @@ bool SonyPTP3_Impl::UpdateStatus()
         {
             cache_.exposure_mode = static_cast<std::uint32_t>(itExpMode->second);
         }
-        if (itFocalLength != props.end())
+        if (itFocalLength != props.end() || itFocalLengthSteadyShot != props.end() ||
+            itFocalLengthVendor != props.end() || itZoomDistance != props.end())
         {
-            // Focal length is typically reported in 1/100th mm for standard PTP.
-            cache_.exposure_params.focal_length = static_cast<double>(itFocalLength->second) / 100.0;
+            double focal_mm = cache_.exposure_params.focal_length;
+            if (itFocalLength != props.end())
+            {
+                // Standard PTP focal length (0x5008) is represented in 0.01mm units.
+                focal_mm = static_cast<double>(itFocalLength->second) / 100.0;
+            }
+            else if (itZoomDistance != props.end() && itZoomDistance->second > 0ULL)
+            {
+                // 0xD00B is Zoom Distance with 0.001 mm unit.
+                focal_mm = static_cast<double>(itZoomDistance->second) / 1000.0;
+            }
+            else if (itFocalLengthSteadyShot != props.end() && itFocalLengthSteadyShot->second > 0ULL)
+            {
+                // Sony 0xD193 list values are in millimeters.
+                focal_mm = static_cast<double>(itFocalLengthSteadyShot->second);
+            }
+            else if (itFocalLengthVendor != props.end() && itFocalLengthVendor->second > 0ULL)
+            {
+                // Historical vendor fallback kept at 0.01mm scaling.
+                focal_mm = static_cast<double>(itFocalLengthVendor->second) / 100.0;
+            }
+            cache_.exposure_params.focal_length = focal_mm;
         }
         if (itMovie != props.end())
         {
             cache_.movie_recording = (itMovie->second != 0);
         }
+    }
+
+    if (!bHasAnyExposureField)
+    {
+        // If we cannot find any exposure fields in the returned properties,
+        // log raw properties for debug analysis (especially for focal length encoding).
+        std::cerr << "[SonyPTP3_Impl] UpdateStatus: no exposure field found. Available props: ";
+        for (const auto &p : props)
+        {
+            std::cerr << std::hex << "0x" << p.first << "=0x" << p.second << " ";
+        }
+        std::cerr << std::dec << "\n";
     }
 
     if (bHasAnyExposureField)

@@ -314,7 +314,7 @@ int main(int argc, char *argv[])
     ApiStat statUpdateStatus("UpdateStatus");
     ApiStat statGetExposure("GetExposureParams");
     ApiStat statGetMode("GetExposureMode");
-    ApiStat statGetFocal("GetFocalLengthFromCache");
+    ApiStat statGetFocal("GetFocalLength");
     ApiStat statSetExposure("SetExposureParams");
 
     SonyPTP3_Impl::ExposureParams stLastParams{};

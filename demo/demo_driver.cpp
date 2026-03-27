@@ -220,7 +220,8 @@ int main(int argc, char *argv[])
         std::cout << std::fixed << std::setprecision(4)
                   << "Shutter(1/sec): " << params.shutter_speed
                   << " FNo: " << params.f_number
-                  << " ISO: " << params.iso << "\n";
+                  << " ISO: " << params.iso
+                  << " FocalLength(mm): " << params.focal_length << "\n";
     }
 
     cam.Disconnect();
