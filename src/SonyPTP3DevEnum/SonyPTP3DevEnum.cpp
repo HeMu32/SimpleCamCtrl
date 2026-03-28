@@ -448,6 +448,7 @@ TOpaqueDeviceHandle SonyPTP3DevEnum::OpenByIndex(
     SafeRelease(pWiaMgr);
 
     auto spSony = std::make_shared<SonyPTP3_Impl>();
+    spSony->SetFriendlyName(stEntry.sDeviceName);
     if (!spSony->SetPtpTransport(spTransport))
     {
         if (bCOMInitHere) { CoUninitialize(); }

@@ -127,6 +127,7 @@ namespace
 
 SonyPTP3_Impl::SonyPTP3_Impl()
 {
+    SetFriendlyName("SonyPTP3");
     StartPollingWorker();
 }
 
@@ -364,6 +365,18 @@ bool SonyPTP3_Impl::IsConnected() const
     if (!lock) return false;
 
     return (connection_state_ == ConnectionState::SessionOpen) && transport_;
+}
+
+std::string SonyPTP3_Impl::GetFriendlyName() const
+{
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    return friendly_name_;
+}
+
+void SonyPTP3_Impl::SetFriendlyName(const std::string& sName)
+{
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    friendly_name_ = sName.empty() ? std::string("SonyPTP3") : sName;
 }
 
 bool SonyPTP3_Impl::UpdateStatus()

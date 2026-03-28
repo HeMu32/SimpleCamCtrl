@@ -58,6 +58,11 @@ public:
     bool SetPtpTransport(IPTPTransportPtr transport) override;
     void Disconnect();
     bool IsConnected() const;
+    std::string GetFriendlyName() const override;
+
+    // Device-enumerator side metadata injection.
+    // This does not affect transport/session behavior.
+    void SetFriendlyName(const std::string& sName);
 
     // ISimpleCamCtrl
     /**
@@ -179,6 +184,8 @@ private:
     // is still empty. This flag prevents returning uninitialized default values
     // if getters are called immediately after Connect() but before UpdateStatus().
     bool has_status_ = false;
+
+    std::string friendly_name_;
 
     PTPControl *ptp_ = nullptr;
     DataManager *data_mgr_ = nullptr;
