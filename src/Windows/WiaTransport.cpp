@@ -19,7 +19,7 @@ void SafeRelease(T **ppT)
 
 void LogWiaTransportLifecycle(const char* pszStage, const WiaTransport* pSelf)
 {
-#if defined(_DEBUG)
+#if defined(_DEBUG_LIFECYCLE)
     std::cerr << "[Lifecycle][WiaTransport] " << pszStage
               << " this=" << pSelf
               << " thread=" << std::this_thread::get_id()

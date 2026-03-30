@@ -10,7 +10,7 @@ namespace
 {
     void LogSonyPTP3ImplLifecycle(const char* pszStage, const SonyPTP3_Impl* pSelf)
     {
-#if defined(_DEBUG)
+#if defined(_DEBUG_LIFECYCLE)
         std::cerr << "[Lifecycle][SonyPTP3_Impl] " << pszStage
                   << " this=" << pSelf
                   << " thread=" << std::this_thread::get_id()
