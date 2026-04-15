@@ -579,6 +579,7 @@ bool SonyPTP3_Impl::MovieRecStart()
     bool ok = ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonDown);
     if (ok)
     {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
         cache_.movie_recording = true;
     }
     return ok;
@@ -592,6 +593,7 @@ bool SonyPTP3_Impl::MovieRecEnd()
     bool ok = ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonUp);
     if (ok)
     {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
         cache_.movie_recording = false;
     }
     return ok;
@@ -599,9 +601,7 @@ bool SonyPTP3_Impl::MovieRecEnd()
 
 bool SonyPTP3_Impl::IsMovieRecording() const
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
-    if (!lock) return false;
-
+    std::lock_guard<std::mutex> lock(cache_mutex_);
     return cache_.movie_recording;
 }
 
