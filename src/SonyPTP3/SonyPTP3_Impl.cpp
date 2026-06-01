@@ -2,6 +2,7 @@
 #include "SonyPTP3_aux.h"
 
 #include <cmath>
+#include <limits>
 #include <cstring> // for std::memcpy
 #include <iostream>
 #include <thread>
@@ -100,6 +101,37 @@ namespace
         return EncodeShutterSpeedRawFromSeconds(shutter_seconds);
     }
 
+    double RawCoordinateToPercent(std::uint16_t raw_value, std::uint16_t raw_max)
+    {
+        if (raw_max == 0U)
+        {
+            return 0.0;
+        }
+
+        return (static_cast<double>(raw_value) * 100.0) / static_cast<double>(raw_max);
+    }
+
+    std::uint16_t PercentToRawCoordinate(double percent_value, std::uint16_t raw_max)
+    {
+        if (raw_max == 0U)
+        {
+            return 0U;
+        }
+
+        const double clamped_percent = sonyptp3::Clamp(percent_value, 0.0, 100.0);
+        const double raw_value = (clamped_percent / 100.0) * static_cast<double>(raw_max);
+        const long long raw_rounded = std::llround(raw_value);
+        if (raw_rounded < 0LL)
+        {
+            return 0U;
+        }
+        if (raw_rounded > static_cast<long long>(raw_max))
+        {
+            return raw_max;
+        }
+        return static_cast<std::uint16_t>(raw_rounded);
+    }
+
     double DecodeFNumber(std::uint16_t raw_f_number)
     {
         return static_cast<double>(raw_f_number) / 100.0;
@@ -123,6 +155,7 @@ namespace
         }
         return static_cast<std::uint16_t>(raw);
     }
+
 }
 
 SonyPTP3_Impl::SonyPTP3_Impl()
@@ -322,6 +355,8 @@ bool SonyPTP3_Impl::SetPtpTransport(IPTPTransportPtr transport)
 
     transport_ = std::move(transport);
     has_status_ = false;
+    has_cached_status_params_ = false;
+    cached_status_params_.clear();
     if (transport_)
     {
         connection_state_ = ConnectionState::TransportReady;
@@ -356,6 +391,8 @@ void SonyPTP3_Impl::Disconnect()
     connection_state_ = transport_ ? ConnectionState::TransportReady
                                    : ConnectionState::Disconnected;
     has_status_ = false;
+    has_cached_status_params_ = false;
+    cached_status_params_.clear();
     LogSonyPTP3ImplLifecycle("Disconnect end", this);
 }
 
@@ -392,21 +429,48 @@ bool SonyPTP3_Impl::UpdateStatus()
     // Prefer requesting full property snapshot with extended-device-property
     // option enabled (per PTP3 spec: param1=0, param2=1). Fall back to older
     // calling conventions for compatibility with legacy bodies/firmware.
-    PTP_EscapeResult res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {0U, 1U},
-                                              nullptr, 0);
-    if (PTP_HR_FAILED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
+    static const std::vector<std::uint32_t> kFallbackParams[] = {
+        {0U, 1U},
+        {0U},
+        {},
+    };
+
+    PTP_EscapeResult res;
+    int nSuccessIdx = -1;
+
+    if (has_cached_status_params_)
     {
-        res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {0U},
-                                 nullptr, 0);
+        res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo,
+                                 cached_status_params_, nullptr, 0);
+        if (PTP_HR_SUCCEEDED(res.hr) && res.responseCode == sonyptp3::PTP_RC_OK)
+        {
+            nSuccessIdx = -2;
+        }
     }
-    if (PTP_HR_FAILED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
+
+    if (nSuccessIdx == -1)
     {
-        res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo, {},
-                                 nullptr, 0);
+        for (int i = 0; i < static_cast<int>(sizeof(kFallbackParams) / sizeof(kFallbackParams[0])); ++i)
+        {
+            res = transport_->Escape(sonyptp3::PTP_OC_SDIOGetAllExtDeviceInfo,
+                                     kFallbackParams[i], nullptr, 0);
+            if (PTP_HR_SUCCEEDED(res.hr) && res.responseCode == sonyptp3::PTP_RC_OK)
+            {
+                nSuccessIdx = i;
+                break;
+            }
+        }
     }
-    if (PTP_HR_FAILED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
+
+    if (nSuccessIdx == -1)
     {
         return false;
+    }
+
+    if (nSuccessIdx >= 0 && !has_cached_status_params_)
+    {
+        cached_status_params_ = kFallbackParams[nSuccessIdx];
+        has_cached_status_params_ = true;
     }
 
     std::unordered_map<std::uint16_t, std::uint64_t> props;
@@ -427,9 +491,17 @@ bool SonyPTP3_Impl::UpdateStatus()
     const auto itFocalLengthSteadyShot = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_LENGTH_STEADY_SHOT));
     const auto itFocalLengthVendor = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_LENGTH_VENDOR));
     const auto itZoomDistance = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_ZOOM_DISTANCE));
+    const auto itFocusPositionTarget = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_POSITION_SETTING));
+    const auto itFocusPositionCurrent = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_POSITION_CURRENT_VALUE));
+    const auto itFocalDistanceMeter = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCAL_DISTANCE_IN_METER));
+    const auto itFollowFocusPosition = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOLLOW_FOCUS_POSITION_CURRENT_VALUE));
+    const auto itAfAreaPosition = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_AREA_X_Y_AF_C));
+    const auto itAfFreeSizePosition = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_AF_FREE_SIZE_AND_POSITION_SETTING));
+    const auto itFocusModeStatus = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_MODE_STATUS));
+    const auto itFocusTrackingStatus = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_TRACKING_STATUS));
     const auto itMovie = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_MOVIE_REC));
 
-    const bool bHasAnyExposureField =
+    const bool bHasAnyStatusField =
         (itShutter != props.end()) ||
         (itFNo != props.end()) ||
         (itIso != props.end()) ||
@@ -438,9 +510,17 @@ bool SonyPTP3_Impl::UpdateStatus()
         (itFocalLength != props.end()) ||
         (itFocalLengthSteadyShot != props.end()) ||
         (itFocalLengthVendor != props.end()) ||
-        (itZoomDistance != props.end());
+        (itZoomDistance != props.end()) ||
+        (itFocusPositionTarget != props.end()) ||
+        (itFocusPositionCurrent != props.end()) ||
+        (itFocalDistanceMeter != props.end()) ||
+        (itFollowFocusPosition != props.end()) ||
+        (itAfAreaPosition != props.end()) ||
+        (itAfFreeSizePosition != props.end()) ||
+        (itFocusModeStatus != props.end()) ||
+        (itFocusTrackingStatus != props.end());
 
-    if (!bHasAnyExposureField && !has_status_)
+    if (!bHasAnyStatusField && !has_status_)
     {
         return false;
     }
@@ -501,13 +581,82 @@ bool SonyPTP3_Impl::UpdateStatus()
         {
             cache_.movie_recording = (itMovie->second != 0);
         }
+
+        cache_.focus_position = ISimpleCamCtrl::FocusPositionInfo{};
+        if (itFocusPositionTarget != props.end())
+        {
+            cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_ABSOLUTE;
+            cache_.focus_position.absolute_target = static_cast<std::uint16_t>(itFocusPositionTarget->second);
+            cache_.focus_position.has_absolute_target = true;
+        }
+        if (itFocusPositionCurrent != props.end())
+        {
+            cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_ABSOLUTE;
+            cache_.focus_position.absolute_current = static_cast<std::uint16_t>(itFocusPositionCurrent->second);
+            cache_.focus_position.has_absolute_current = true;
+        }
+        if (itFocalDistanceMeter != props.end())
+        {
+            cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_FOCAL_DISTANCE_METER;
+            const std::uint32_t raw = static_cast<std::uint32_t>(itFocalDistanceMeter->second);
+            if (raw == 0xFFFFFFFFU)
+            {
+                cache_.focus_position.focal_distance_meters = std::numeric_limits<double>::infinity();
+            }
+            else
+            {
+                // Device reports focal distance in units of 0.001 m per spec.
+                cache_.focus_position.focal_distance_meters = static_cast<double>(raw) / 1000.0;
+            }
+            cache_.focus_position.has_focal_distance_meter = true;
+        }
+        if (itFollowFocusPosition != props.end())
+        {
+            cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_FOLLOW_FOCUS;
+            cache_.focus_position.follow_focus_current = static_cast<std::uint32_t>(itFollowFocusPosition->second);
+            cache_.focus_position.has_follow_focus_current = true;
+        }
+        if (itAfAreaPosition != props.end())
+        {
+            cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_AF_AREA_POINT;
+            const std::uint32_t raw_xy = static_cast<std::uint32_t>(itAfAreaPosition->second);
+            cache_.focus_position.af_area_x = RawCoordinateToPercent(
+                static_cast<std::uint16_t>((raw_xy >> 16) & 0xFFFFU),
+                sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+            cache_.focus_position.af_area_y = RawCoordinateToPercent(
+                static_cast<std::uint16_t>(raw_xy & 0xFFFFU),
+                sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+            cache_.focus_position.has_af_area_position = true;
+        }
+        else if (itAfFreeSizePosition != props.end())
+        {
+            cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_AF_AREA_POINT;
+            const std::uint32_t raw_xy = static_cast<std::uint32_t>(itAfFreeSizePosition->second & 0xFFFFFFFFULL);
+            cache_.focus_position.af_area_x = RawCoordinateToPercent(
+                static_cast<std::uint16_t>((raw_xy >> 16) & 0xFFFFU),
+                sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+            cache_.focus_position.af_area_y = RawCoordinateToPercent(
+                static_cast<std::uint16_t>(raw_xy & 0xFFFFU),
+                sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+            cache_.focus_position.has_af_area_position = true;
+        }
+        if (itFocusModeStatus != props.end())
+        {
+            cache_.focus_position.focus_mode_status = static_cast<std::uint8_t>(itFocusModeStatus->second);
+            cache_.focus_position.has_focus_mode_status = true;
+        }
+        if (itFocusTrackingStatus != props.end())
+        {
+            cache_.focus_position.focus_tracking_status = static_cast<std::uint8_t>(itFocusTrackingStatus->second);
+            cache_.focus_position.has_focus_tracking_status = true;
+        }
     }
 
-    if (!bHasAnyExposureField)
+    if (!bHasAnyStatusField)
     {
-        // If we cannot find any exposure fields in the returned properties,
-        // log raw properties for debug analysis (especially for focal length encoding).
-        std::cerr << "[SonyPTP3_Impl] UpdateStatus: no exposure field found. Available props: ";
+        // If we cannot find any cached status field in the returned properties,
+        // log raw properties for debug analysis.
+        std::cerr << "[SonyPTP3_Impl] UpdateStatus: no cached status field found. Available props: ";
         for (const auto &p : props)
         {
             std::cerr << std::hex << "0x" << p.first << "=0x" << p.second << " ";
@@ -515,7 +664,7 @@ bool SonyPTP3_Impl::UpdateStatus()
         std::cerr << std::dec << "\n";
     }
 
-    if (bHasAnyExposureField)
+    if (bHasAnyStatusField)
     {
         has_status_ = true;
     }
@@ -531,6 +680,191 @@ bool SonyPTP3_Impl::GetExposureParams(ExposureParams &out_params) const
     }
     out_params = cache_.exposure_params;
     return true;
+}
+
+bool SonyPTP3_Impl::GetFocusPositionInfo(ISimpleCamCtrl::FocusPositionInfo &out_info) const
+{
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    if (!has_status_)
+    {
+        return false;
+    }
+    out_info = cache_.focus_position;
+        return (out_info.has_absolute_target || out_info.has_absolute_current ||
+            out_info.has_focal_distance_meter || out_info.has_follow_focus_current ||
+            out_info.has_af_area_position ||
+            out_info.has_focus_mode_status || out_info.has_focus_tracking_status);
+}
+
+bool SonyPTP3_Impl::SetFocusPositionBestEffort(std::uint16_t raw_position)
+{
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    const bool ok = SetDevicePropValue(sonyptp3::DPC_FOCUS_POSITION_SETTING,
+                                       raw_position, sizeof(raw_position));
+    if (ok)
+    {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+        cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_ABSOLUTE;
+        cache_.focus_position.absolute_target = raw_position;
+        cache_.focus_position.has_absolute_target = true;
+        has_status_ = true;
+    }
+    return ok;
+}
+
+bool SonyPTP3_Impl::SetAfAreaPositionBestEffort(double x_percent, double y_percent)
+{
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!std::isfinite(x_percent) || !std::isfinite(y_percent))
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    const std::uint16_t x = PercentToRawCoordinate(x_percent, sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+    const std::uint16_t y = PercentToRawCoordinate(y_percent, sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+    const double applied_x_percent = RawCoordinateToPercent(x, sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+    const double applied_y_percent = RawCoordinateToPercent(y, sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+
+    // Sony AF Area Position (0xD2DC): the implementation maps normalized
+    // [0, 100] percentages to the vendor coordinate range, then packs x into
+    // the upper 16 bits and y into the lower 16 bits.
+    const std::uint32_t packed_xy = (static_cast<std::uint32_t>(x) << 16) |
+                                    static_cast<std::uint32_t>(y);
+    const bool ok = ControlDevice(sonyptp3::DPC_FOCUS_AREA_X_Y, packed_xy);
+    if (ok)
+    {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+        cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_AF_AREA_POINT;
+        cache_.focus_position.af_area_x = applied_x_percent;
+        cache_.focus_position.af_area_y = applied_y_percent;
+        cache_.focus_position.has_af_area_position = true;
+        has_status_ = true;
+    }
+    return ok;
+}
+
+bool SonyPTP3_Impl::SetAfAreaModeBestEffort(std::uint16_t raw_area_mode)
+{
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    return SetDevicePropValue(sonyptp3::DPC_FOCUS_AREA,
+                              raw_area_mode,
+                              sizeof(raw_area_mode));
+}
+
+bool SonyPTP3_Impl::SetAfFreeSizeAndPositionBestEffort(double height_percent,
+                                                       double width_percent,
+                                                       double x_percent,
+                                                       double y_percent)
+{
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!std::isfinite(height_percent) || !std::isfinite(width_percent) ||
+        !std::isfinite(x_percent) || !std::isfinite(y_percent))
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    const std::uint16_t height = PercentToRawCoordinate(height_percent, sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+    const std::uint16_t width  = PercentToRawCoordinate(width_percent, sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+    
+    // raw value (39, 38): likely the min. AF area size for ILCE-7RM5; 
+    // (39, 1): min. accpected size for ILCE-7RM5; on smaller value it discard size setting and set only position.
+    // (Requires FW ver 4.00+ on ILCE-7RM5; Older FW dosen't support Free Size)
+     
+    const std::uint16_t x = PercentToRawCoordinate(x_percent, sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+    const std::uint16_t y = PercentToRawCoordinate(y_percent, sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+
+    const std::uint64_t packed =
+        (static_cast<std::uint64_t>(height) << 48) |
+        (static_cast<std::uint64_t>(width) << 32) |
+        (static_cast<std::uint64_t>(x) << 16) |
+        static_cast<std::uint64_t>(y);
+    const bool ok = SetDevicePropValue(sonyptp3::DPC_AF_FREE_SIZE_AND_POSITION_SETTING,
+                                        packed,
+                                        sizeof(packed));
+    if (ok)
+    {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+        cache_.focus_position.sony_type_mask |= SONY_FOCUS_POSITION_TYPE_AF_AREA_POINT;
+        cache_.focus_position.af_area_x = RawCoordinateToPercent(x, sonyptp3::DPC_SONY_AF_AREA_X_MAX);
+        cache_.focus_position.af_area_y = RawCoordinateToPercent(y, sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
+        cache_.focus_position.has_af_area_position = true;
+        has_status_ = true;
+    }
+    return ok;
+}
+
+bool SonyPTP3_Impl::SetPositionKeyBestEffort(std::uint8_t raw_key)
+{
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    return SetDevicePropValue(sonyptp3::DPC_POSITION_KEY,
+                              raw_key,
+                              sizeof(raw_key));
+}
+
+bool SonyPTP3_Impl::SetFocusModeBestEffort(std::uint32_t raw_mode)
+{
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    return SetDevicePropValue(sonyptp3::DPC_FOCUS_MODE, raw_mode, sizeof(raw_mode));
 }
 
 std::uint32_t SonyPTP3_Impl::GetExposureMode() const

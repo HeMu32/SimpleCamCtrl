@@ -55,6 +55,39 @@ namespace sonyptp3
     constexpr std::uint32_t DPC_FOCAL_LENGTH_STEADY_SHOT = 0xD193; // Image stabilization steady shot focal length
     constexpr std::uint32_t DPC_FOCAL_LENGTH_VENDOR = 0xD2D6; // Sony vendor extension fallback
     constexpr std::uint32_t DPC_ZOOM_DISTANCE = 0xD00B; // Zoom distance (0.001 mm unit)
+    constexpr std::uint32_t DPC_FOCAL_DISTANCE_IN_METER = 0xD004;
+    constexpr std::uint32_t DPC_FOCUS_MODE = 0x500A;
+    constexpr std::uint32_t DPC_FOCUS_AREA = 0xD22C;
+    constexpr std::uint32_t DPC_FOCUS_AREA_X_Y = 0xD2DC;
+    constexpr std::uint32_t DPC_FOCUS_AREA_X_Y_AF_C = 0xE079;
+    constexpr std::uint32_t DPC_AF_FREE_SIZE_AND_POSITION_SETTING = 0xD138;
+    constexpr std::uint32_t DPC_POSITION_KEY = 0xD25A;
+    constexpr std::uint32_t DPC_FOCUS_POSITION_SETTING = 0xE042;
+    constexpr std::uint32_t DPC_FOCUS_POSITION_CURRENT_VALUE = 0xE043;
+    constexpr std::uint32_t DPC_FOCUS_MODE_STATUS = 0xE044;
+    constexpr std::uint32_t DPC_FOCUS_TRACKING_STATUS = 0xE005;
+    constexpr std::uint32_t DPC_FOLLOW_FOCUS_POSITION_SETTING = 0xE088;
+    constexpr std::uint32_t DPC_FOLLOW_FOCUS_POSITION_CURRENT_VALUE = 0xE089;
+
+    constexpr std::uint32_t DPC_SONY_FOCUS_MODE_MF = 0x0001;
+    constexpr std::uint32_t DPC_SONY_FOCUS_MODE_AF_S = 0x0002;
+    constexpr std::uint32_t DPC_SONY_FOCUS_MODE_AF_C = 0x0004;
+    constexpr std::uint32_t DPC_SONY_FOCUS_MODE_DMF = 0x8006;
+    constexpr std::uint32_t DPC_SONY_FOCUS_MODE_AF_A = 0x8005;
+
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_WIDE = 0x0001;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_ZONE = 0x0002;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_CENTER = 0x0003;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_FLEXIBLE_SPOT_S = 0x0101;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_FLEXIBLE_SPOT_M = 0x0102;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_FLEXIBLE_SPOT_L = 0x0103;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_EXPAND_FLEXIBLE_SPOT = 0x0104;
+    constexpr std::uint16_t DPC_SONY_FOCUS_AREA_FLEXIBLE_SPOT_FREE_SIZE_1 = 0x1102;
+
+    constexpr std::uint16_t DPC_SONY_AF_AREA_X_MIN = 0x0000;
+    constexpr std::uint16_t DPC_SONY_AF_AREA_X_MAX = 0x027F; // 639
+    constexpr std::uint16_t DPC_SONY_AF_AREA_Y_MIN = 0x0000;
+    constexpr std::uint16_t DPC_SONY_AF_AREA_Y_MAX = 0x01DF; // 479
 
     // =========================================================================
     // Utilities

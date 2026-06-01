@@ -161,6 +161,54 @@ void WiaTransport::WorkerMain()
     const DWORD SIZEOF_REQUIRED_VENDOR_DATA_IN = sizeof(Local_PTP_VENDOR_DATA_IN) - 1;
     const DWORD SIZEOF_REQUIRED_VENDOR_DATA_OUT = sizeof(Local_PTP_VENDOR_DATA_OUT) - 1;
 
+    auto fnAcquireCachedExtras = [this]() -> IWiaItemExtras* {
+        if (m_pCachedItemExtra)
+        {
+            return m_pCachedItemExtra;
+        }
+
+        IWiaDevMgr* pWiaMgr = nullptr;
+        IWiaItem* pWiaItem = nullptr;
+        IWiaItemExtras* pExtra = nullptr;
+
+        BSTR bstrId = SysAllocStringLen(nullptr, static_cast<UINT>(m_sWiaDeviceId.size()));
+        if (!bstrId)
+        {
+            return nullptr;
+        }
+        MultiByteToWideChar(CP_UTF8, 0, m_sWiaDeviceId.c_str(), -1, bstrId,
+                            static_cast<int>(m_sWiaDeviceId.size() + 1));
+
+        if (SUCCEEDED(CoCreateInstance(CLSID_WiaDevMgr, nullptr, CLSCTX_LOCAL_SERVER,
+                                       IID_IWiaDevMgr, reinterpret_cast<void**>(&pWiaMgr))) && pWiaMgr)
+        {
+            if (SUCCEEDED(pWiaMgr->CreateDevice(bstrId, &pWiaItem)) && pWiaItem)
+            {
+                pWiaItem->QueryInterface(IID_IWiaItemExtras, reinterpret_cast<void**>(&pExtra));
+            }
+        }
+
+        SafeRelease(&pWiaItem);
+        SafeRelease(&pWiaMgr);
+        SysFreeString(bstrId);
+
+        if (pExtra)
+        {
+            m_pCachedItemExtra = pExtra;
+            LogWiaTransportLifecycle("WorkerMain cached IWiaItemExtras acquired", this);
+        }
+        return pExtra;
+    };
+
+    auto fnInvalidateCache = [this]() {
+        if (m_pCachedItemExtra)
+        {
+            m_pCachedItemExtra->Release();
+            m_pCachedItemExtra = nullptr;
+            LogWiaTransportLifecycle("WorkerMain invalidated cached IWiaItemExtras", this);
+        }
+    };
+
     for (;;)
     {
         std::shared_ptr<TEscapeTask> spTask;
@@ -231,37 +279,24 @@ void WiaTransport::WorkerMain()
         ZeroMemory(pOut, dwOutSize);
 
         DWORD dwActualLocal = 0;
-        BSTR bstrId = SysAllocStringLen(nullptr, static_cast<UINT>(m_sWiaDeviceId.size()));
-        IWiaDevMgr* pWiaMgr = nullptr;
-        IWiaItem* pWiaItem = nullptr;
-        IWiaItemExtras* pItemExtra = nullptr;
         HRESULT hrLocal = E_FAIL;
 
-        if (bstrId != nullptr)
+        IWiaItemExtras* pItemExtra = fnAcquireCachedExtras();
+        if (pItemExtra)
         {
-            MultiByteToWideChar(CP_UTF8, 0, m_sWiaDeviceId.c_str(), -1, bstrId, static_cast<int>(m_sWiaDeviceId.size() + 1));
-            if (SUCCEEDED(CoCreateInstance(
-                    CLSID_WiaDevMgr,
-                    nullptr,
-                    CLSCTX_LOCAL_SERVER,
-                    IID_IWiaDevMgr,
-                    reinterpret_cast<void**>(&pWiaMgr))) && pWiaMgr != nullptr)
+            LogWiaTransportLifecycle("WorkerMain Escape call begin", this);
+            hrLocal = pItemExtra->Escape(
+                ESCAPE_PTP_VENDOR_COMMAND,
+                reinterpret_cast<BYTE*>(pIn),
+                dwInSize,
+                reinterpret_cast<BYTE*>(pOut),
+                dwOutSize,
+                &dwActualLocal);
+            LogWiaTransportLifecycle("WorkerMain Escape call end", this);
+
+            if (FAILED(hrLocal))
             {
-                if (SUCCEEDED(pWiaMgr->CreateDevice(bstrId, &pWiaItem)) && pWiaItem != nullptr)
-                {
-                    if (SUCCEEDED(pWiaItem->QueryInterface(IID_IWiaItemExtras, reinterpret_cast<void**>(&pItemExtra))) && pItemExtra != nullptr)
-                    {
-                        LogWiaTransportLifecycle("WorkerMain Escape call begin", this);
-                        hrLocal = pItemExtra->Escape(
-                            ESCAPE_PTP_VENDOR_COMMAND,
-                            reinterpret_cast<BYTE*>(pIn),
-                            dwInSize,
-                            reinterpret_cast<BYTE*>(pOut),
-                            dwOutSize,
-                            &dwActualLocal);
-                        LogWiaTransportLifecycle("WorkerMain Escape call end", this);
-                    }
-                }
+                fnInvalidateCache();
             }
         }
         out.hr = static_cast<std::int32_t>(hrLocal);
@@ -280,15 +315,14 @@ void WiaTransport::WorkerMain()
 
         CoTaskMemFree(pIn);
         CoTaskMemFree(pOut);
-        SafeRelease(&pItemExtra);
-        SafeRelease(&pWiaItem);
-        SafeRelease(&pWiaMgr);
-        if (bstrId != nullptr)
-        {
-            SysFreeString(bstrId);
-        }
         spTask->promise.set_value(out);
         LogWiaTransportLifecycle("WorkerMain task end", this);
+    }
+
+    if (m_pCachedItemExtra)
+    {
+        m_pCachedItemExtra->Release();
+        m_pCachedItemExtra = nullptr;
     }
 
     if (bCOMInitHere)

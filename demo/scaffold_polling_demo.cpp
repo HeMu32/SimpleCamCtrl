@@ -2,7 +2,8 @@
  * @file scaffold_polling_demo.cpp
  * @brief Scaffold demo: loop without pauses and continuously call
  * UpdateStatus/GetExposureParams/GetExposureMode/SetExposureParams,
- * while recording response status and call latency.
+ * plus focus-position polling and AF point best-effort setting, while
+ * recording response status and call latency.
  */
 
 #ifndef NOMINMAX
@@ -22,6 +23,7 @@
 #include <memory>
 #include <string>
 
+#include <SonyPTP3_aux.h>
 #include <SonyPTP3_Impl.h>
 #include <WiaTransport.h>
 
@@ -315,10 +317,19 @@ int main(int argc, char *argv[])
     ApiStat statGetExposure("GetExposureParams");
     ApiStat statGetMode("GetExposureMode");
     ApiStat statGetFocal("GetFocalLength");
+    ApiStat statGetFocusPosition("GetFocusPositionInfo");
+    ApiStat statSetAfAreaPosition("SetAfAreaPosition");
     ApiStat statSetExposure("SetExposureParams");
 
     SonyPTP3_Impl::ExposureParams stLastParams{};
     bool bHaveLastParams = false;
+    ISimpleCamCtrl::FocusPositionInfo stLastFocusInfo{};
+    bool bHaveLastFocusInfo = false;
+
+    const bool bFocusModeOk = camCtrl.SetFocusModeBestEffort(sonyptp3::DPC_SONY_FOCUS_MODE_AF_C);
+    const bool bAfAreaModeOk = camCtrl.SetAfAreaModeBestEffort(sonyptp3::DPC_SONY_FOCUS_AREA_FLEXIBLE_SPOT_S);
+    std::cout << "Focus init: AF-C=" << (bFocusModeOk ? "ok" : "fail")
+              << " AF area mode=" << (bAfAreaModeOk ? "ok" : "fail") << "\n";
 
     std::uint64_t nLoopCount = 0;
     constexpr std::uint64_t kPrintEvery = 200;
@@ -364,6 +375,23 @@ int main(int argc, char *argv[])
         const auto modeUs = std::chrono::duration_cast<std::chrono::microseconds>(tpModeEnd - tpModeBegin).count();
         statGetMode.Add(true, static_cast<std::uint64_t>(modeUs));
 
+        ISimpleCamCtrl::FocusPositionInfo stCurrentFocusInfo{};
+        auto resultGetFocus = MeasureBoolCall([&camCtrl, &stCurrentFocusInfo]() {
+            return camCtrl.GetFocusPositionInfo(stCurrentFocusInfo);
+        });
+        statGetFocusPosition.Add(resultGetFocus.first, resultGetFocus.second);
+        if (resultGetFocus.first)
+        {
+            stLastFocusInfo = stCurrentFocusInfo;
+            bHaveLastFocusInfo = true;
+        }
+
+        const double dAfPercent = static_cast<double>(nLoopCount % 101U);
+        auto resultSetAfArea = MeasureBoolCall([&camCtrl, dAfPercent]() {
+            return camCtrl.SetAfAreaPositionBestEffort(dAfPercent, dAfPercent);
+        });
+        statSetAfAreaPosition.Add(resultSetAfArea.first, resultSetAfArea.second);
+
         const SonyPTP3_Impl::ExposureParams &stSetParams = bHaveLastParams ? stLastParams : stCurrentParams;
         auto resultSetExposure = MeasureBoolCall([&camCtrl, &stSetParams]() {
             return camCtrl.SetExposureParams(stSetParams);
@@ -379,11 +407,19 @@ int main(int argc, char *argv[])
             statGetExposure.Print();
             statGetMode.Print();
             statGetFocal.Print();
+            statGetFocusPosition.Print();
+            statSetAfAreaPosition.Print();
             statSetExposure.Print();
 
             if (bHaveLastParams)
             {
                 std::cout << "Latest focal length = " << stLastParams.focal_length << " mm\n";
+            }
+            if (bHaveLastFocusInfo)
+            {
+                std::cout << "Latest AF position = " << std::fixed << std::setprecision(1)
+                          << stLastFocusInfo.af_area_x << "% , "
+                          << stLastFocusInfo.af_area_y << "%\n";
             }
             std::cout << std::flush;
         }
@@ -394,11 +430,19 @@ int main(int argc, char *argv[])
     statGetExposure.Print();
     statGetMode.Print();
     statGetFocal.Print();
+    statGetFocusPosition.Print();
+    statSetAfAreaPosition.Print();
     statSetExposure.Print();
 
     if (bHaveLastParams)
     {
         std::cout << "Final focal length = " << stLastParams.focal_length << " mm\n";
+    }
+    if (bHaveLastFocusInfo)
+    {
+        std::cout << "Final AF position = " << std::fixed << std::setprecision(1)
+                  << stLastFocusInfo.af_area_x << "% , "
+                  << stLastFocusInfo.af_area_y << "%\n";
     }
 
     camCtrl.Disconnect();

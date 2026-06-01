@@ -20,6 +20,15 @@
 #include <CamCtrl/ISimpleCamCtrl.h>
 #include <CamCtrl/PTPTransport.h>
 
+#ifndef SONY_FOCUS_POSITION_TYPE_NONE
+#define SONY_FOCUS_POSITION_TYPE_NONE 0x00000000U
+#define SONY_FOCUS_POSITION_TYPE_ABSOLUTE 0x00000001U
+#define SONY_FOCUS_POSITION_TYPE_FOCAL_DISTANCE_METER 0x00000002U
+#define SONY_FOCUS_POSITION_TYPE_FOLLOW_FOCUS 0x00000004U
+#define SONY_FOCUS_POSITION_TYPE_AF_AREA_POINT 0x00000008U
+#define SONY_FOCUS_POSITION_TYPE_SONY_MASK 0x0000000FU
+#endif
+
 // Forward declarations to avoid pulling GUI/MFC headers into MinGW builds.
 class PTPControl;
 class DataManager;
@@ -58,7 +67,7 @@ public:
     bool SetPtpTransport(IPTPTransportPtr transport) override;
     void Disconnect();
     bool IsConnected() const;
-    std::string GetFriendlyName() const override;
+    std::string GetFriendlyName() const;
 
     // Device-enumerator side metadata injection.
     // This does not affect transport/session behavior.
@@ -79,6 +88,81 @@ public:
     bool UpdateStatus() override;
     bool GetExposureParams(ExposureParams &out_params) const override;
     std::uint32_t GetExposureMode() const override;
+    
+    /**
+     * @brief Get cached focus-related values (generic snapshot defined in the
+     *        public interface).
+     * @param out_info Output focus info snapshot.
+     * @return true if at least one focus-related field is available.
+     */
+    bool GetFocusPositionInfo(ISimpleCamCtrl::FocusPositionInfo &out_info) const override;
+
+    /**
+     * @brief Best-effort absolute focus position request.
+     *
+     * This uses Sony's absolute focus position property (0xE042) and keeps the
+     * lock window intentionally short so callers can continue even when the
+     * camera is busy or the transport is slow.
+     * @param raw_position Sony absolute focus position raw value.
+     * @return true if the command was accepted by the transport/device.
+     */
+    bool SetFocusPositionBestEffort(std::uint16_t raw_position) override;
+
+     /**
+      * @brief Best-effort AF area point move using normalized percentages.
+      *
+      * Callers provide x as a width percentage and y as a height percentage,
+      * both in [0, 100]. Sony-specific raw coordinates are derived internally
+      * from the device's supported range before sending the command.
+      * @param x_percent AF point x position as a percentage of frame width.
+      * @param y_percent AF point y position as a percentage of frame height.
+      * @return true if the command was accepted by the transport/device.
+      */
+     bool SetAfAreaPositionBestEffort(double x_percent, double y_percent) override;
+
+    /**
+     * @brief Best-effort AF area mode request (e.g. Flexible Spot M).
+     * @param raw_area_mode Sony AF area mode raw value.
+     * @return true if the command was accepted by the transport/device.
+     */
+    bool SetAfAreaModeBestEffort(std::uint16_t raw_area_mode) override;
+
+    /**
+     * @brief Best-effort AF free size and position setting.
+     *
+     * Callers specify the AF box size and position as percentages of the
+     * frame, all in [0, 100]. Implementations are responsible for converting
+     * those normalized values to the device/vendor coordinate range before
+     * sending the command.
+     * 
+     * @param height_percent AF box height as a percentage of frame height.
+     * @param width_percent AF box width as a percentage of frame width.
+     * @param x_percent AF box x position as a percentage of frame width.
+     * @param y_percent AF box y position as a percentage of frame height.
+     * @return true if the command was accepted by the transport/device.
+     */
+    bool SetAfFreeSizeAndPositionBestEffort(double height_percent,
+                                            double width_percent,
+                                            double x_percent,
+                                            double y_percent) override;
+
+    /**
+     * @brief Best-effort position key setting.
+     *
+     * Sony example code sets this to HOSTPC (0x01) before remote touch / AF
+     * point operations.
+     * @param raw_key Position key raw value.
+     * @return true if the command was accepted by the transport/device.
+     */
+    bool SetPositionKeyBestEffort(std::uint8_t raw_key);
+
+    /**
+     * @brief Best-effort focus mode request for Sony vendor values.
+     * @param raw_mode Sony focus mode raw value (for example MF / AF_S / AF_C).
+     * @return true if the command was accepted by the transport/device.
+     */
+    bool SetFocusModeBestEffort(std::uint32_t raw_mode) override;
+
     bool FocusStart() override;
     bool FocusEnd() override;
     bool ShutterStart() override;
@@ -101,6 +185,7 @@ private:
     {
         ExposureParams exposure_params;
         std::uint32_t exposure_mode = 0;
+        ISimpleCamCtrl::FocusPositionInfo focus_position;
         bool liveview_valid = false;
         bool movie_recording = false;
     };
@@ -184,6 +269,9 @@ private:
     // is still empty. This flag prevents returning uninitialized default values
     // if getters are called immediately after Connect() but before UpdateStatus().
     bool has_status_ = false;
+
+    std::vector<std::uint32_t> cached_status_params_;
+    bool has_cached_status_params_ = false;
 
     std::string friendly_name_;
 

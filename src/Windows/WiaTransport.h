@@ -101,4 +101,6 @@ private:
     std::deque<std::shared_ptr<TEscapeTask>> m_qTasks;
     bool m_bStop = false;
     bool m_bStarted = false;
+
+    IWiaItemExtras *m_pCachedItemExtra = nullptr;
 };
