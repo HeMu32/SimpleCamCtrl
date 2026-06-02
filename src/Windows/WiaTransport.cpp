@@ -281,22 +281,33 @@ void WiaTransport::WorkerMain()
         DWORD dwActualLocal = 0;
         HRESULT hrLocal = E_FAIL;
 
+        auto fnPerformEscape = [&](IWiaItemExtras* pExtra) -> HRESULT {
+            LogWiaTransportLifecycle("WorkerMain Escape call begin", this);
+            HRESULT hr = pExtra->Escape(
+                ESCAPE_PTP_VENDOR_COMMAND,
+                reinterpret_cast<BYTE*>(pIn), dwInSize,
+                reinterpret_cast<BYTE*>(pOut), dwOutSize,
+                &dwActualLocal);
+            LogWiaTransportLifecycle("WorkerMain Escape call end", this);
+            return hr;
+        };
+
         IWiaItemExtras* pItemExtra = fnAcquireCachedExtras();
         if (pItemExtra)
         {
-            LogWiaTransportLifecycle("WorkerMain Escape call begin", this);
-            hrLocal = pItemExtra->Escape(
-                ESCAPE_PTP_VENDOR_COMMAND,
-                reinterpret_cast<BYTE*>(pIn),
-                dwInSize,
-                reinterpret_cast<BYTE*>(pOut),
-                dwOutSize,
-                &dwActualLocal);
-            LogWiaTransportLifecycle("WorkerMain Escape call end", this);
-
+            hrLocal = fnPerformEscape(pItemExtra);
             if (FAILED(hrLocal))
             {
                 fnInvalidateCache();
+                pItemExtra = fnAcquireCachedExtras();
+                if (pItemExtra)
+                {
+                    hrLocal = fnPerformEscape(pItemExtra);
+                    if (FAILED(hrLocal))
+                    {
+                        fnInvalidateCache();
+                    }
+                }
             }
         }
         out.hr = static_cast<std::int32_t>(hrLocal);

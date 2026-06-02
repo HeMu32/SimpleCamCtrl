@@ -9,6 +9,10 @@
 #define _POLLING_WORKER_INTER_MS 50
 #define _POLLING_WORKER_TIMEOUT_MS 500
 
+/// @brief Best-effort API lock: try_lock (0 ms wait), fail immediately if contended
+/// @brief Interactive single-I/O (Focus/Shutter/MovieRec): reasonable wait for user-triggered actions
+#define _INTERACTIVE_LOCK_TIMEOUT_MS 500
+
 #include <cstdint>
 #include <atomic>
 #include <condition_variable>
@@ -244,7 +248,7 @@ private:
 	 * - SessionOpen -> Disconnected: active session is closed and transport is explicitly removed.
 	 * - Any state -> Disconnected: Connect() fails and no transport remains available.
      */
-    enum class ConnectionState {
+    enum class ConnectionState : int {
         Disconnected,   ///< No transport, or session closed/failed.
         TransportReady, ///< Transport injected, but PTP session not yet established.
         SessionOpen     ///< PTP session active and ready.
@@ -254,7 +258,7 @@ private:
     mutable std::mutex cache_mutex_;       ///< cache lock used by getters and worker-safe cache updates.
     StateCache cache_;
 
-    ConnectionState connection_state_ = ConnectionState::Disconnected;
+    std::atomic<ConnectionState> connection_state_{ConnectionState::Disconnected};
 
     // Worker thread for periodic status polling.
     std::atomic<bool> polling_worker_running_{false};

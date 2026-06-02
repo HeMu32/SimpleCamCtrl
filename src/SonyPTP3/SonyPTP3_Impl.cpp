@@ -182,18 +182,18 @@ bool SonyPTP3_Impl::Connect()
     
     if (!transport_)
     {
-        connection_state_ = ConnectionState::Disconnected;
+        connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
         LogSonyPTP3ImplLifecycle("Connect end: no transport", this);
         return false;
     }
 
-    if (connection_state_ == ConnectionState::SessionOpen)
+    if (connection_state_.load(std::memory_order_acquire) == ConnectionState::SessionOpen)
     {
         LogSonyPTP3ImplLifecycle("Connect end: already open", this);
         return true;
     }
 
-    connection_state_ = ConnectionState::TransportReady;
+    connection_state_.store(ConnectionState::TransportReady, std::memory_order_release);
 
     auto call = [&](std::uint16_t opcode, const std::vector<std::uint32_t> &params,
                     PTP_EscapeResult &out_res) -> bool
@@ -303,22 +303,24 @@ bool SonyPTP3_Impl::Connect()
             std::this_thread::sleep_for(std::chrono::milliseconds(_CONN_RETRY_TIMEOUT_MS));
             if (!connect_once_with_detail(last_res))
             {
-                connection_state_ = transport_ ? ConnectionState::TransportReady
-                                               : ConnectionState::Disconnected;
+                connection_state_.store(transport_ ? ConnectionState::TransportReady
+                                                   : ConnectionState::Disconnected,
+                                        std::memory_order_release);
                 LogSonyPTP3ImplLifecycle("Connect end: retry failed", this);
                 return false;
             }
         }
         else
         {
-            connection_state_ = transport_ ? ConnectionState::TransportReady
-                                           : ConnectionState::Disconnected;
+            connection_state_.store(transport_ ? ConnectionState::TransportReady
+                                               : ConnectionState::Disconnected,
+                                    std::memory_order_release);
             LogSonyPTP3ImplLifecycle("Connect end: initial connect failed", this);
             return false;
         }
     }
 
-    connection_state_ = ConnectionState::SessionOpen;
+    connection_state_.store(ConnectionState::SessionOpen, std::memory_order_release);
     has_status_ = false;
     LogSonyPTP3ImplLifecycle("Connect end: success", this);
     return true;
@@ -333,19 +335,19 @@ bool SonyPTP3_Impl::SetPtpTransport(IPTPTransportPtr transport)
     {
         if (!transport_)
         {
-            connection_state_ = ConnectionState::Disconnected;
+            connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
             has_status_ = false;
             return false;
         }
 
-        if (connection_state_ != ConnectionState::SessionOpen)
+        if (connection_state_.load(std::memory_order_acquire) != ConnectionState::SessionOpen)
         {
-            connection_state_ = ConnectionState::TransportReady;
+            connection_state_.store(ConnectionState::TransportReady, std::memory_order_release);
         }
         return true;
     }
 
-    if (transport_ && connection_state_ == ConnectionState::SessionOpen)
+    if (transport_ && connection_state_.load(std::memory_order_acquire) == ConnectionState::SessionOpen)
     {
         ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonUp);
         ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonUp);
@@ -359,12 +361,12 @@ bool SonyPTP3_Impl::SetPtpTransport(IPTPTransportPtr transport)
     cached_status_params_.clear();
     if (transport_)
     {
-        connection_state_ = ConnectionState::TransportReady;
+        connection_state_.store(ConnectionState::TransportReady, std::memory_order_release);
         return true;
     }
     else
     {
-        connection_state_ = ConnectionState::Disconnected;
+        connection_state_.store(ConnectionState::Disconnected, std::memory_order_release);
         return false;
     }
 }
@@ -379,7 +381,7 @@ void SonyPTP3_Impl::Disconnect()
         return;
     }
 
-    if (transport_ && connection_state_ == ConnectionState::SessionOpen)
+    if (transport_ && connection_state_.load(std::memory_order_acquire) == ConnectionState::SessionOpen)
     {
         ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonUp);
         ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonUp);
@@ -388,8 +390,9 @@ void SonyPTP3_Impl::Disconnect()
         (void)r;
     }
 
-    connection_state_ = transport_ ? ConnectionState::TransportReady
-                                   : ConnectionState::Disconnected;
+    connection_state_.store(transport_ ? ConnectionState::TransportReady
+                                       : ConnectionState::Disconnected,
+                            std::memory_order_release);
     has_status_ = false;
     has_cached_status_params_ = false;
     cached_status_params_.clear();
@@ -398,10 +401,7 @@ void SonyPTP3_Impl::Disconnect()
 
 bool SonyPTP3_Impl::IsConnected() const
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
-    if (!lock) return false;
-
-    return (connection_state_ == ConnectionState::SessionOpen) && transport_;
+    return (connection_state_.load(std::memory_order_acquire) == ConnectionState::SessionOpen) && transport_;
 }
 
 std::string SonyPTP3_Impl::GetFriendlyName() const
@@ -445,6 +445,11 @@ bool SonyPTP3_Impl::UpdateStatus()
         if (PTP_HR_SUCCEEDED(res.hr) && res.responseCode == sonyptp3::PTP_RC_OK)
         {
             nSuccessIdx = -2;
+        }
+        else
+        {
+            has_cached_status_params_ = false;
+            cached_status_params_.clear();
         }
     }
 
@@ -698,7 +703,7 @@ bool SonyPTP3_Impl::GetFocusPositionInfo(ISimpleCamCtrl::FocusPositionInfo &out_
 
 bool SonyPTP3_Impl::SetFocusPositionBestEffort(std::uint16_t raw_position)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
     if (!lock)
     {
         return false;
@@ -724,7 +729,7 @@ bool SonyPTP3_Impl::SetFocusPositionBestEffort(std::uint16_t raw_position)
 
 bool SonyPTP3_Impl::SetAfAreaPositionBestEffort(double x_percent, double y_percent)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
     if (!lock)
     {
         return false;
@@ -765,7 +770,7 @@ bool SonyPTP3_Impl::SetAfAreaPositionBestEffort(double x_percent, double y_perce
 
 bool SonyPTP3_Impl::SetAfAreaModeBestEffort(std::uint16_t raw_area_mode)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
     if (!lock)
     {
         return false;
@@ -786,7 +791,7 @@ bool SonyPTP3_Impl::SetAfFreeSizeAndPositionBestEffort(double height_percent,
                                                        double x_percent,
                                                        double y_percent)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
     if (!lock)
     {
         return false;
@@ -835,7 +840,7 @@ bool SonyPTP3_Impl::SetAfFreeSizeAndPositionBestEffort(double height_percent,
 
 bool SonyPTP3_Impl::SetPositionKeyBestEffort(std::uint8_t raw_key)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
     if (!lock)
     {
         return false;
@@ -853,7 +858,7 @@ bool SonyPTP3_Impl::SetPositionKeyBestEffort(std::uint8_t raw_key)
 
 bool SonyPTP3_Impl::SetFocusModeBestEffort(std::uint32_t raw_mode)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(50));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
     if (!lock)
     {
         return false;
@@ -875,7 +880,7 @@ std::uint32_t SonyPTP3_Impl::GetExposureMode() const
 
 bool SonyPTP3_Impl::FocusStart()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
     return ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonDown);
@@ -883,7 +888,7 @@ bool SonyPTP3_Impl::FocusStart()
 
 bool SonyPTP3_Impl::FocusEnd()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
     return ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonUp);
@@ -891,7 +896,7 @@ bool SonyPTP3_Impl::FocusEnd()
 
 bool SonyPTP3_Impl::ShutterStart()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
     return ControlDevice(sonyptp3::DPC_S2_BUTTON, kButtonDown);
@@ -899,7 +904,7 @@ bool SonyPTP3_Impl::ShutterStart()
 
 bool SonyPTP3_Impl::ShutterEnd()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
     return ControlDevice(sonyptp3::DPC_S2_BUTTON, kButtonUp);
@@ -907,7 +912,7 @@ bool SonyPTP3_Impl::ShutterEnd()
 
 bool SonyPTP3_Impl::MovieRecStart()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
     bool ok = ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonDown);
@@ -921,7 +926,7 @@ bool SonyPTP3_Impl::MovieRecStart()
 
 bool SonyPTP3_Impl::MovieRecEnd()
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(5000));
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
     bool ok = ControlDevice(sonyptp3::DPC_MOVIE_REC, kButtonUp);
@@ -959,12 +964,21 @@ bool SonyPTP3_Impl::SetExposureParams(const ExposureParams &params)
     ok &= SetDevicePropValue(sonyptp3::DPC_ISO, params.iso, sizeof(std::uint32_t));
     ok &= SetDevicePropValue(sonyptp3::DPC_EXPOSURE_COMPENSATION, params.exposure_comp,
                              sizeof(std::uint32_t));
+    if (ok)
+    {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+        cache_.exposure_params.shutter_speed = params.shutter_speed;
+        cache_.exposure_params.f_number = params.f_number;
+        cache_.exposure_params.iso = params.iso;
+        cache_.exposure_params.exposure_comp = params.exposure_comp;
+        has_status_ = true;
+    }
     return ok;
 }
 
 bool SonyPTP3_Impl::EnsureConnected()
 {
-    return (connection_state_ == ConnectionState::SessionOpen) && transport_;
+    return (connection_state_.load(std::memory_order_acquire) == ConnectionState::SessionOpen) && transport_;
 }
 
 bool SonyPTP3_Impl::UpdateStatusInternal()
