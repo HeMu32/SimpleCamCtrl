@@ -703,7 +703,7 @@ bool SonyPTP3_Impl::GetFocusPositionInfo(ISimpleCamCtrl::FocusPositionInfo &out_
 
 bool SonyPTP3_Impl::SetFocusPositionBestEffort(std::uint16_t raw_position)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
     if (!lock)
     {
         return false;
@@ -729,7 +729,7 @@ bool SonyPTP3_Impl::SetFocusPositionBestEffort(std::uint16_t raw_position)
 
 bool SonyPTP3_Impl::SetAfAreaPositionBestEffort(double x_percent, double y_percent)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
     if (!lock)
     {
         return false;
@@ -770,7 +770,7 @@ bool SonyPTP3_Impl::SetAfAreaPositionBestEffort(double x_percent, double y_perce
 
 bool SonyPTP3_Impl::SetAfAreaModeBestEffort(std::uint16_t raw_area_mode)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
     if (!lock)
     {
         return false;
@@ -791,7 +791,7 @@ bool SonyPTP3_Impl::SetAfFreeSizeAndPositionBestEffort(double height_percent,
                                                        double x_percent,
                                                        double y_percent)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
     if (!lock)
     {
         return false;
@@ -840,7 +840,7 @@ bool SonyPTP3_Impl::SetAfFreeSizeAndPositionBestEffort(double height_percent,
 
 bool SonyPTP3_Impl::SetPositionKeyBestEffort(std::uint8_t raw_key)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
     if (!lock)
     {
         return false;
@@ -858,7 +858,7 @@ bool SonyPTP3_Impl::SetPositionKeyBestEffort(std::uint8_t raw_key)
 
 bool SonyPTP3_Impl::SetFocusModeBestEffort(std::uint32_t raw_mode)
 {
-    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::try_to_lock);
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
     if (!lock)
     {
         return false;

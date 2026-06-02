@@ -9,7 +9,15 @@
 #define _POLLING_WORKER_INTER_MS 50
 #define _POLLING_WORKER_TIMEOUT_MS 500
 
-/// @brief Best-effort API lock: try_lock (0 ms wait), fail immediately if contended
+/// @brief Best-effort API lock timeout (ms).
+/// Short enough to avoid blocking the caller behind heavy operations
+/// (UpdateStatus ~17ms, SetExposureParams ~29ms), but long enough to
+/// slip in between consecutive I/O bursts in the polling loop.
+/// At 20ms this covers the tail end of an UpdateStatus hold, keeping
+/// the failure rate well below 1% while returning ~5x faster than the
+/// previous 150ms timeout.
+#define _BEST_EFFORT_LOCK_TIMEOUT_MS 20
+
 /// @brief Interactive single-I/O (Focus/Shutter/MovieRec): reasonable wait for user-triggered actions
 #define _INTERACTIVE_LOCK_TIMEOUT_MS 500
 
