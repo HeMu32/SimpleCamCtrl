@@ -23,7 +23,18 @@ if(NOT EXISTS "${RSCA_COMMONS_DIR}/CamCtrl/ISimpleCamCtrl.h")
 	message(FATAL_ERROR "[SimpleCamCtrl] Missing required dependency: ${RSCA_COMMONS_DIR}/CamCtrl/ISimpleCamCtrl.h")
 endif()
 
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+	set(SIMPLECAMCTRL_BUILD_DEMOS_DEFAULT ON)
+else()
+	set(SIMPLECAMCTRL_BUILD_DEMOS_DEFAULT OFF)
+endif()
+
+option(SIMPLECAMCTRL_BUILD_DEMOS "Build SimpleCamCtrl demos" ${SIMPLECAMCTRL_BUILD_DEMOS_DEFAULT})
+
 add_subdirectory(src)
-add_subdirectory(demo)
+
+if(SIMPLECAMCTRL_BUILD_DEMOS AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/demo/CMakeLists.txt")
+	add_subdirectory(demo)
+endif()
 
 message(STATUS "Configured SimpleCamCtrl with camctrl library")
