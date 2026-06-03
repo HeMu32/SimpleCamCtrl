@@ -3,14 +3,6 @@ project(camctrl_demo LANGUAGES CXX)
 
 get_filename_component(SIMPLECAMCTRL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
 
-if(NOT DEFINED RSCA_COMMONS_DIR)
-    if(DEFINED RSCA_3RDPARTY_DIR AND EXISTS "${RSCA_3RDPARTY_DIR}/RSCtrlApp-Commons/CamCtrl/ISimpleCamCtrl.h")
-        set(RSCA_COMMONS_DIR "${RSCA_3RDPARTY_DIR}/RSCtrlApp-Commons")
-    else()
-        set(RSCA_COMMONS_DIR "${SIMPLECAMCTRL_ROOT}/3rdparty/RSCtrlApp-Commons")
-    endif()
-endif()
-
 if(NOT TARGET camctrl)
     message(STATUS "camctrl target not found; adding parent project to build it")
     add_subdirectory("${SIMPLECAMCTRL_ROOT}" "${CMAKE_BINARY_DIR}/parent_build")

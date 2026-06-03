@@ -1,20 +1,20 @@
 ﻿cmake_minimum_required(VERSION 3.10)
 
-get_filename_component(SIMPLECAMCTRL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
-
+# Dependency paths are resolved by the parent CMakeLists.txt.
+# Only provide local fallbacks for direct inclusion of this file.
 if(NOT DEFINED RSCA_COMMONS_DIR)
+  get_filename_component(SIMPLECAMCTRL_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/.." ABSOLUTE)
   if(DEFINED RSCA_3RDPARTY_DIR AND EXISTS "${RSCA_3RDPARTY_DIR}/RSCtrlApp-Commons/CamCtrl/ISimpleCamCtrl.h")
     set(RSCA_COMMONS_DIR "${RSCA_3RDPARTY_DIR}/RSCtrlApp-Commons")
   else()
     set(RSCA_COMMONS_DIR "${SIMPLECAMCTRL_ROOT}/3rdparty/RSCtrlApp-Commons")
   endif()
-endif()
-
-if(NOT DEFINED CAMRMCMD_PTP_DIR)
-  if(DEFINED RSCA_3RDPARTY_DIR AND EXISTS "${RSCA_3RDPARTY_DIR}/CamRmCmd_Demos/example-v3-windows/CameraControlPTP/CrCommandData.h")
-    set(CAMRMCMD_PTP_DIR "${RSCA_3RDPARTY_DIR}/CamRmCmd_Demos/example-v3-windows/CameraControlPTP")
-  else()
-    set(CAMRMCMD_PTP_DIR "${SIMPLECAMCTRL_ROOT}/3rdparty/CamRmCmd_Demos/example-v3-windows/CameraControlPTP")
+  if(NOT DEFINED CAMRMCMD_PTP_DIR)
+    if(DEFINED RSCA_3RDPARTY_DIR AND EXISTS "${RSCA_3RDPARTY_DIR}/CamRmCmd_Demos/example-v3-windows/CameraControlPTP/CrCommandData.h")
+      set(CAMRMCMD_PTP_DIR "${RSCA_3RDPARTY_DIR}/CamRmCmd_Demos/example-v3-windows/CameraControlPTP")
+    else()
+      set(CAMRMCMD_PTP_DIR "${SIMPLECAMCTRL_ROOT}/3rdparty/CamRmCmd_Demos/example-v3-windows/CameraControlPTP")
+    endif()
   endif()
 endif()
 
