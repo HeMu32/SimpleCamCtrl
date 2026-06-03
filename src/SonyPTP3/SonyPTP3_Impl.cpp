@@ -811,7 +811,7 @@ bool SonyPTP3_Impl::SetAfFreeSizeAndPositionBestEffort(double height_percent,
     const std::uint16_t height = PercentToRawCoordinate(height_percent, sonyptp3::DPC_SONY_AF_AREA_Y_MAX);
     const std::uint16_t width  = PercentToRawCoordinate(width_percent, sonyptp3::DPC_SONY_AF_AREA_X_MAX);
     
-    // raw value (39, 38): likely the min. AF area size for ILCE-7RM5; 
+    // raw value in h, w (39, 38): likely the min. AF area size for ILCE-7RM5; 
     // (39, 1): min. accpected size for ILCE-7RM5; on smaller value it discard size setting and set only position.
     // (Requires FW ver 4.00+ on ILCE-7RM5; Older FW dosen't support Free Size)
      

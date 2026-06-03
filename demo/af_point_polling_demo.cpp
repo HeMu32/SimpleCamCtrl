@@ -85,10 +85,11 @@ int main(int argc, char *argv[])
     const bool bPositionKeyOk = spCam->SetPositionKeyBestEffort(0x01);
     const bool bFocusModeOk = spCam->SetFocusModeBestEffort(sonyptp3::DPC_SONY_FOCUS_MODE_AF_C);
     const bool bAreaModeOk = spCam->SetAfAreaModeBestEffort(sonyptp3::DPC_SONY_FOCUS_AREA_FLEXIBLE_SPOT_FREE_SIZE_1);
-    const bool bAfFreeSizeOk = spCam->SetAfFreeSizeAndPositionBestEffort(7.9, 6.1, 50.0, 50.0);
+    const bool bAfFreeSizeOk = spCam->SetAfFreeSizeAndPositionBestEffort(8.2, 6.1, 50.0, 50.0);
     // Values are normalized percentages of frame size/position; the
     // implementation maps them to the camera's supported range.
-    // Box size (7.9, 6.1): in raw value (39, 38): likely the min. size for ILCE-7RM5; 
+    // Box size (8.2, 6.1): raw value (39, 39).
+    // Device min. AF area size for ILCE-7RM5: (39, 38);
     // (39, 1): min. accpected raw value for ILCE-7RM5 
     // (Requires FW ver 4.00+ on ILCE-7RM5; Older FW dosen't support Free Size)
     std::cout << "Set position-key=" << (bPositionKeyOk ? "ok" : "fail")
