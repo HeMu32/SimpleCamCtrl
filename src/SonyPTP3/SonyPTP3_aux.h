@@ -75,6 +75,8 @@ namespace sonyptp3
     constexpr std::uint32_t DPC_SONY_FOCUS_MODE_DMF = 0x8006;
     constexpr std::uint32_t DPC_SONY_FOCUS_MODE_AF_A = 0x8005;
 
+    constexpr std::uint32_t ISO_AUTO_RAW = 0x00FFFFFF;
+
     constexpr std::uint16_t DPC_SONY_FOCUS_AREA_WIDE = 0x0001;
     constexpr std::uint16_t DPC_SONY_FOCUS_AREA_ZONE = 0x0002;
     constexpr std::uint16_t DPC_SONY_FOCUS_AREA_CENTER = 0x0003;
