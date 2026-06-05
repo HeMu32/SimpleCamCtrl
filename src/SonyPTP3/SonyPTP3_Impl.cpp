@@ -505,6 +505,7 @@ bool SonyPTP3_Impl::UpdateStatus()
     const auto itFocusModeStatus = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_MODE_STATUS));
     const auto itFocusTrackingStatus = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_FOCUS_TRACKING_STATUS));
     const auto itMovie = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_MOVIE_REC));
+    const auto itStillSaveDest = props.find(static_cast<std::uint16_t>(sonyptp3::DPC_STILL_IMAGE_SAVE_DESTINATION));
 
     const bool bHasAnyStatusField =
         (itShutter != props.end()) ||
@@ -534,23 +535,34 @@ bool SonyPTP3_Impl::UpdateStatus()
     {
         std::lock_guard<std::mutex> cache_lock(cache_mutex_);
 
-        if (itShutter != props.end())
+        // Guard: if SetExposureParams just wrote locally, skip one cycle so
+        // the locally-set value is not immediately overwritten by a stale
+        // device snapshot.  The flag is cleared here; the next UpdateStatus
+        // will see the correct value from the camera.
+        if (m_bExposureSetLocally)
         {
-            cache_.exposure_params.shutter_speed =
-                DecodeShutterSpeedReciprocal(static_cast<std::uint32_t>(itShutter->second));
+            m_bExposureSetLocally = false;
         }
-        if (itFNo != props.end())
+        else
         {
-            cache_.exposure_params.f_number =
-                DecodeFNumber(static_cast<std::uint16_t>(itFNo->second));
-        }
-        if (itIso != props.end())
-        {
-            cache_.exposure_params.iso = static_cast<std::uint32_t>(itIso->second);
-        }
-        if (itExpComp != props.end())
-        {
-            cache_.exposure_params.exposure_comp = static_cast<std::int32_t>(itExpComp->second);
+            if (itShutter != props.end())
+            {
+                cache_.exposure_params.shutter_speed =
+                    DecodeShutterSpeedReciprocal(static_cast<std::uint32_t>(itShutter->second));
+            }
+            if (itFNo != props.end())
+            {
+                cache_.exposure_params.f_number =
+                    DecodeFNumber(static_cast<std::uint16_t>(itFNo->second));
+            }
+            if (itIso != props.end())
+            {
+                cache_.exposure_params.iso = static_cast<std::uint32_t>(itIso->second);
+            }
+            if (itExpComp != props.end())
+            {
+                cache_.exposure_params.exposure_comp = static_cast<std::int32_t>(itExpComp->second);
+            }
         }
         if (itExpMode != props.end())
         {
@@ -585,6 +597,10 @@ bool SonyPTP3_Impl::UpdateStatus()
         if (itMovie != props.end())
         {
             cache_.movie_recording = (itMovie->second != 0);
+        }
+        if (itStillSaveDest != props.end())
+        {
+            cache_.still_image_save_dest = static_cast<std::uint16_t>(itStillSaveDest->second);
         }
 
         cache_.focus_position = ISimpleCamCtrl::FocusPositionInfo{};
@@ -878,6 +894,12 @@ std::uint32_t SonyPTP3_Impl::GetExposureMode() const
     return cache_.exposure_mode;
 }
 
+std::uint16_t SonyPTP3_Impl::GetStillImageSaveDestination() const
+{
+    std::lock_guard<std::mutex> lock(cache_mutex_);
+    return cache_.still_image_save_dest;
+}
+
 bool SonyPTP3_Impl::FocusStart()
 {
     std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
@@ -972,6 +994,103 @@ bool SonyPTP3_Impl::SetExposureParams(const ExposureParams &params)
         cache_.exposure_params.iso = params.iso;
         cache_.exposure_params.exposure_comp = params.exposure_comp;
         has_status_ = true;
+        m_bExposureSetLocally = true; // suppress next UpdateStatus cache overwrite
+    }
+    return ok;
+}
+
+bool SonyPTP3_Impl::SetExposureParamsMasked(const ExposureParams &params, std::uint8_t field_mask)
+{
+    using clock = std::chrono::steady_clock;
+    const auto now = clock::now();
+    const auto now_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+
+    std::uint8_t diff_mask = 0;
+    if ((field_mask & ISimpleCamCtrl::kExpField_ShutterSpeed) &&
+        std::fabs(params.shutter_speed - m_stLastExpPush.shutter_speed) > 0.5)
+    {
+        diff_mask |= ISimpleCamCtrl::kExpField_ShutterSpeed;
+    }
+    if ((field_mask & ISimpleCamCtrl::kExpField_FNumber) &&
+        std::fabs(params.f_number - m_stLastExpPush.f_number) > 0.005)
+    {
+        diff_mask |= ISimpleCamCtrl::kExpField_FNumber;
+    }
+    if ((field_mask & ISimpleCamCtrl::kExpField_ISO) &&
+        params.iso != m_stLastExpPush.iso)
+    {
+        diff_mask |= ISimpleCamCtrl::kExpField_ISO;
+    }
+    if ((field_mask & ISimpleCamCtrl::kExpField_ExpComp) &&
+        params.exposure_comp != m_stLastExpPush.exposure_comp)
+    {
+        diff_mask |= ISimpleCamCtrl::kExpField_ExpComp;
+    }
+
+    std::uint8_t push_mask = diff_mask;
+
+    if (push_mask == 0)
+    {
+        const std::int64_t since_last = now_ms - m_nLastExpPushMs.load(std::memory_order_relaxed);
+        if (since_last >= 1000)
+        {
+            push_mask = field_mask;
+        }
+    }
+
+    if (push_mask == 0)
+    {
+        return true;
+    }
+
+    if (diff_mask != 0)
+    {
+        m_nLastExpChangeMs.store(now_ms, std::memory_order_relaxed);
+    }
+
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(
+        _BEST_EFFORT_LOCK_TIMEOUT_MS));
+    if (!lock) return false;
+
+    if (!EnsureConnected()) return false;
+
+    bool ok = true;
+    if (push_mask & ISimpleCamCtrl::kExpField_ShutterSpeed)
+        ok &= SetDevicePropValue(sonyptp3::DPC_SHUTTER_SPEED,
+                                 EncodeShutterSpeedRaw(params.shutter_speed),
+                                 sizeof(std::uint32_t));
+    if (push_mask & ISimpleCamCtrl::kExpField_FNumber)
+        ok &= SetDevicePropValue(sonyptp3::DPC_FNUMBER,
+                                 EncodeFNumberRaw(params.f_number),
+                                 sizeof(std::uint16_t));
+    if (push_mask & ISimpleCamCtrl::kExpField_ISO)
+        ok &= SetDevicePropValue(sonyptp3::DPC_ISO, params.iso, sizeof(std::uint32_t));
+    if (push_mask & ISimpleCamCtrl::kExpField_ExpComp)
+        ok &= SetDevicePropValue(sonyptp3::DPC_EXPOSURE_COMPENSATION, params.exposure_comp,
+                                 sizeof(std::uint32_t));
+    if (ok)
+    {
+        std::lock_guard<std::mutex> cache_lock(cache_mutex_);
+        if (push_mask & ISimpleCamCtrl::kExpField_ShutterSpeed)
+            cache_.exposure_params.shutter_speed = params.shutter_speed;
+        if (push_mask & ISimpleCamCtrl::kExpField_FNumber)
+            cache_.exposure_params.f_number = params.f_number;
+        if (push_mask & ISimpleCamCtrl::kExpField_ISO)
+            cache_.exposure_params.iso = params.iso;
+        if (push_mask & ISimpleCamCtrl::kExpField_ExpComp)
+            cache_.exposure_params.exposure_comp = params.exposure_comp;
+        has_status_ = true;
+        m_bExposureSetLocally = true;
+
+        if (push_mask & ISimpleCamCtrl::kExpField_ShutterSpeed)
+            m_stLastExpPush.shutter_speed = params.shutter_speed;
+        if (push_mask & ISimpleCamCtrl::kExpField_FNumber)
+            m_stLastExpPush.f_number = params.f_number;
+        if (push_mask & ISimpleCamCtrl::kExpField_ISO)
+            m_stLastExpPush.iso = params.iso;
+        if (push_mask & ISimpleCamCtrl::kExpField_ExpComp)
+            m_stLastExpPush.exposure_comp = params.exposure_comp;
+        m_nLastExpPushMs.store(now_ms, std::memory_order_relaxed);
     }
     return ok;
 }

@@ -69,6 +69,13 @@ namespace sonyptp3
     constexpr std::uint32_t DPC_FOLLOW_FOCUS_POSITION_SETTING = 0xE088;
     constexpr std::uint32_t DPC_FOLLOW_FOCUS_POSITION_CURRENT_VALUE = 0xE089;
 
+    constexpr std::uint32_t DPC_SHOOTING_FILE_INFO = 0xD215;
+    constexpr std::uint32_t DPC_STILL_IMAGE_SAVE_DESTINATION = 0xD222;
+
+    constexpr std::uint16_t STILL_IMAGE_SAVE_DEST_HOST_ONLY = 0x0001;
+    constexpr std::uint16_t STILL_IMAGE_SAVE_DEST_CAMERA_ONLY = 0x0010;
+    constexpr std::uint16_t STILL_IMAGE_SAVE_DEST_HOST_AND_CAMERA = 0x0011;
+
     constexpr std::uint32_t DPC_SONY_FOCUS_MODE_MF = 0x0001;
     constexpr std::uint32_t DPC_SONY_FOCUS_MODE_AF_S = 0x0002;
     constexpr std::uint32_t DPC_SONY_FOCUS_MODE_AF_C = 0x0004;

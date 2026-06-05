@@ -183,6 +183,7 @@ public:
     bool MovieRecEnd() override;
     // Movie recording state accessor
     bool IsMovieRecording() const override;
+    std::uint16_t GetStillImageSaveDestination() const override;
     /**
      * @brief Change exposure parameters using physical values.
      * @param params Desired exposure parameters; implementations may apply a subset
@@ -191,6 +192,7 @@ public:
      * @return true on success.
      */
     bool SetExposureParams(const ExposureParams &params) override;
+    bool SetExposureParamsMasked(const ExposureParams &params, std::uint8_t field_mask) override;
 
 private:
     struct StateCache
@@ -200,6 +202,7 @@ private:
         ISimpleCamCtrl::FocusPositionInfo focus_position;
         bool liveview_valid = false;
         bool movie_recording = false;
+        std::uint16_t still_image_save_dest = 0;
     };
 
     /**
@@ -281,6 +284,19 @@ private:
     // is still empty. This flag prevents returning uninitialized default values
     // if getters are called immediately after Connect() but before UpdateStatus().
     bool has_status_ = false;
+
+    // Set by SetExposureParams on success, consumed by UpdateStatus.
+    // When true, the next UpdateStatus skips overwriting the exposure cache
+    // from device-reported values. SDIOSetExtDevicePropValue is synchronous:
+    // PTP_RC_OK means the camera has already accepted the new value, so the
+    // *next* UpdateStatus will read back the correct value from the camera.
+    // Without this guard, a stale device-side snapshot taken before the set
+    // could clobber the locally-written cache entry.
+    bool m_bExposureSetLocally = false;
+
+    ExposureParams m_stLastExpPush{};
+    std::atomic<std::int64_t> m_nLastExpPushMs{0};
+    std::atomic<std::int64_t> m_nLastExpChangeMs{0};
 
     std::vector<std::uint32_t> cached_status_params_;
     bool has_cached_status_params_ = false;
