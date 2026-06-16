@@ -193,8 +193,19 @@ public:
      */
     bool SetExposureParams(const ExposureParams &params) override;
     bool SetExposureParamsMasked(const ExposureParams &params, std::uint8_t field_mask) override;
+    bool SetFocusDistanceBestEffort(double meters) override;
 
 private:
+    struct FocusConversionEntry
+    {
+        std::uint32_t normalized_value = 0;
+        double distance_meters = 0.0;
+    };
+    std::vector<FocusConversionEntry> lens_conversion_table_;
+
+    bool EnsureLensConversionTable();
+    static std::uint16_t DistanceToNormalized(
+        double meters, const std::vector<FocusConversionEntry>& table);
     struct StateCache
     {
         ExposureParams exposure_params;

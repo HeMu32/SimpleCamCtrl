@@ -25,6 +25,7 @@ namespace sonyptp3
     constexpr std::uint16_t PTP_OC_SDIOGetAllExtDeviceInfo = 0x9209;
     constexpr std::uint16_t PTP_OC_SDIOSetContentsTransferMode = 0x9212;
     constexpr std::uint16_t PTP_OC_SDIOOpenSession = 0x9203;
+    constexpr std::uint16_t PTP_OC_SDIOGetLensInformation = 0x9223;
 
     // SDI extension version used by SDIOGetExtDeviceInfo
     constexpr std::uint32_t SDI_Extension_Version = 0x12C;
@@ -68,6 +69,7 @@ namespace sonyptp3
     constexpr std::uint32_t DPC_FOCUS_TRACKING_STATUS = 0xE005;
     constexpr std::uint32_t DPC_FOLLOW_FOCUS_POSITION_SETTING = 0xE088;
     constexpr std::uint32_t DPC_FOLLOW_FOCUS_POSITION_CURRENT_VALUE = 0xE089;
+    constexpr std::uint32_t DPC_LENS_INFORMATION_ENABLE_STATUS = 0xE086;
 
     constexpr std::uint32_t DPC_SHOOTING_FILE_INFO = 0xD215;
     constexpr std::uint32_t DPC_STILL_IMAGE_SAVE_DESTINATION = 0xD222;

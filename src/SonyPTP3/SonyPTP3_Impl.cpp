@@ -1,6 +1,7 @@
 #include "SonyPTP3_Impl.h"
 #include "SonyPTP3_aux.h"
 
+#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <cstring> // for std::memcpy
@@ -886,6 +887,168 @@ bool SonyPTP3_Impl::SetFocusModeBestEffort(std::uint32_t raw_mode)
     }
 
     return SetDevicePropValue(sonyptp3::DPC_FOCUS_MODE, raw_mode, sizeof(raw_mode));
+}
+
+bool SonyPTP3_Impl::EnsureLensConversionTable()
+{
+    if (!lens_conversion_table_.empty())
+    {
+        return true;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    PTP_EscapeResult res =
+        transport_->Escape(sonyptp3::PTP_OC_SDIOGetLensInformation,
+                           {0x00000002}, nullptr, 0);
+    if (!PTP_HR_SUCCEEDED(res.hr) || res.responseCode != sonyptp3::PTP_RC_OK)
+    {
+        return false;
+    }
+    if (res.payload.size() < 8)
+    {
+        return false;
+    }
+
+    std::uint32_t offset = 0;
+    std::uint32_t size = 0;
+    std::memcpy(&offset, res.payload.data(), 4);
+    std::memcpy(&size, res.payload.data() + 4, 4);
+
+    if (offset + size > res.payload.size() || size < 4)
+    {
+        return false;
+    }
+
+    const std::uint8_t* bin = res.payload.data() + offset;
+    const std::size_t binsize = size;
+
+    if (binsize < 4)
+    {
+        return false;
+    }
+
+    std::uint16_t version = 0;
+    std::uint16_t table_num = 0;
+    std::memcpy(&version, bin, 2);
+    std::memcpy(&table_num, bin + 2, 2);
+
+    std::size_t pos = 4;
+    std::vector<FocusConversionEntry> table;
+
+    for (std::uint16_t t = 0; t < table_num && pos + 4 <= binsize; ++t)
+    {
+        std::uint16_t list_num = 0;
+        std::memcpy(&list_num, bin + pos, 2);
+        pos += 4;
+
+        for (std::uint16_t e = 0; e < list_num && pos + 8 <= binsize; ++e)
+        {
+            std::uint32_t norm_val = 0;
+            std::uint32_t focus_pos = 0;
+            std::memcpy(&norm_val, bin + pos, 4);
+            std::memcpy(&focus_pos, bin + pos + 4, 4);
+            pos += 8;
+
+            FocusConversionEntry entry;
+            entry.normalized_value = norm_val;
+            entry.distance_meters = static_cast<double>(focus_pos) / 100.0;
+            table.push_back(entry);
+        }
+
+        break;
+    }
+
+    if (table.empty())
+    {
+        return false;
+    }
+
+    std::sort(table.begin(), table.end(),
+              [](const FocusConversionEntry& a, const FocusConversionEntry& b) {
+                  return a.distance_meters < b.distance_meters;
+              });
+    lens_conversion_table_ = std::move(table);
+    return true;
+}
+
+std::uint16_t SonyPTP3_Impl::DistanceToNormalized(
+    double meters, const std::vector<FocusConversionEntry>& table)
+{
+    if (table.empty())
+    {
+        return 0;
+    }
+
+    if (meters <= table.front().distance_meters)
+    {
+        return static_cast<std::uint16_t>(table.front().normalized_value);
+    }
+
+    for (std::size_t i = 1; i < table.size(); ++i)
+    {
+        if (meters <= table[i].distance_meters)
+        {
+            const auto& lo = table[i - 1];
+            const auto& hi = table[i];
+            const double range = hi.distance_meters - lo.distance_meters;
+            if (range <= 0.0)
+            {
+                return static_cast<std::uint16_t>(hi.normalized_value);
+            }
+            const double frac = (meters - lo.distance_meters) / range;
+            const double interp = lo.normalized_value +
+                frac * (static_cast<double>(hi.normalized_value) - lo.normalized_value);
+            return static_cast<std::uint16_t>(interp + 0.5);
+        }
+    }
+
+    return static_cast<std::uint16_t>(table.back().normalized_value);
+}
+
+bool SonyPTP3_Impl::SetFocusDistanceBestEffort(double meters)
+{
+    if (meters <= 0.0)
+    {
+        return false;
+    }
+
+    std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_BEST_EFFORT_LOCK_TIMEOUT_MS));
+    if (!lock)
+    {
+        return false;
+    }
+
+    if (!EnsureConnected())
+    {
+        return false;
+    }
+
+    if (!EnsureLensConversionTable())
+    {
+        return false;
+    }
+
+    const std::uint16_t raw_position = DistanceToNormalized(meters, lens_conversion_table_);
+
+    if (!SetDevicePropValue(sonyptp3::DPC_FOCUS_MODE,
+                            sonyptp3::DPC_SONY_FOCUS_MODE_MF,
+                            sizeof(std::uint32_t)))
+    {
+        return false;
+    }
+
+    const bool ok = SetDevicePropValue(sonyptp3::DPC_FOLLOW_FOCUS_POSITION_SETTING,
+                                       raw_position, sizeof(raw_position));
+
+    SetDevicePropValue(sonyptp3::DPC_FOCUS_MODE,
+                       sonyptp3::DPC_SONY_FOCUS_MODE_AF_S,
+                       sizeof(std::uint32_t));
+
+    return ok;
 }
 
 std::uint32_t SonyPTP3_Impl::GetExposureMode() const
