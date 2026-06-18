@@ -175,7 +175,7 @@ public:
      */
     bool SetFocusModeBestEffort(std::uint32_t raw_mode) override;
 
-    bool FocusStart() override;
+    bool FocusStart(bool bUseTracking = false) override;
     bool FocusEnd() override;
     bool ShutterStart() override;
     bool ShutterEnd() override;
@@ -311,6 +311,8 @@ private:
 
     std::vector<std::uint32_t> cached_status_params_;
     bool has_cached_status_params_ = false;
+
+    bool m_bTrackingActive = false;
 
     std::string friendly_name_;
 

@@ -46,6 +46,7 @@ namespace sonyptp3
     // Device Property Codes (Sony Vendor Extension)
     constexpr std::uint32_t DPC_MOVIE_REC = 0xD2C8;
     constexpr std::uint32_t DPC_S1_BUTTON = 0xD2C1;
+    constexpr std::uint32_t DPC_TRACKING_ON_AF_ON_BUTTON = 0xD30D;
     constexpr std::uint32_t DPC_S2_BUTTON = 0xD2C2;
     constexpr std::uint32_t DPC_SHUTTER_SPEED = 0xD20D;
     constexpr std::uint32_t DPC_FNUMBER = 0x5007; // Standard PTP

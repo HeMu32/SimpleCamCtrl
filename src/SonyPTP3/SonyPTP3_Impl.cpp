@@ -1063,18 +1063,36 @@ std::uint16_t SonyPTP3_Impl::GetStillImageSaveDestination() const
     return cache_.still_image_save_dest;
 }
 
-bool SonyPTP3_Impl::FocusStart()
+bool SonyPTP3_Impl::FocusStart(bool bUseTracking)
 {
     std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
 
-    return ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonDown);
+    if (!EnsureConnected()) return false;
+
+    bool ok = ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonDown);
+
+    if (bUseTracking && !m_bTrackingActive)
+    {
+        ControlDevice(sonyptp3::DPC_TRACKING_ON_AF_ON_BUTTON, kButtonDown);
+        m_bTrackingActive = true;
+    }
+
+    return ok;
 }
 
 bool SonyPTP3_Impl::FocusEnd()
 {
     std::unique_lock<std::timed_mutex> lock(api_mutex_, std::chrono::milliseconds(_INTERACTIVE_LOCK_TIMEOUT_MS));
     if (!lock) return false;
+
+    if (!EnsureConnected()) return false;
+
+    if (m_bTrackingActive)
+    {
+        ControlDevice(sonyptp3::DPC_TRACKING_ON_AF_ON_BUTTON, kButtonUp);
+        m_bTrackingActive = false;
+    }
 
     return ControlDevice(sonyptp3::DPC_S1_BUTTON, kButtonUp);
 }
