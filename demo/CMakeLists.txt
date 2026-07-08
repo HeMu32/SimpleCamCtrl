@@ -12,11 +12,13 @@ add_executable(demo_driver demo_driver.cpp)
 add_executable(scaffold_polling_demo scaffold_polling_demo.cpp)
 add_executable(focus_sweep_demo focus_sweep_demo.cpp)
 add_executable(af_point_polling_demo af_point_polling_demo.cpp)
+add_executable(af_position_polling_demo af_position_polling_demo.cpp)
 
 target_link_libraries(demo_driver PRIVATE camctrl ole32 oleaut32 uuid)
 target_link_libraries(scaffold_polling_demo PRIVATE camctrl ole32 oleaut32 uuid)
 target_link_libraries(focus_sweep_demo PRIVATE camctrl ole32 oleaut32 uuid)
 target_link_libraries(af_point_polling_demo PRIVATE camctrl ole32 oleaut32 uuid)
+target_link_libraries(af_position_polling_demo PRIVATE camctrl ole32 oleaut32 uuid)
 
 target_include_directories(demo_driver PRIVATE
     ${SIMPLECAMCTRL_ROOT}
@@ -38,6 +40,11 @@ target_include_directories(af_point_polling_demo PRIVATE
     ${RSCA_COMMONS_DIR}
 )
 
+target_include_directories(af_position_polling_demo PRIVATE
+    ${SIMPLECAMCTRL_ROOT}
+    ${RSCA_COMMONS_DIR}
+)
+
 set_target_properties(demo_driver PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
@@ -54,6 +61,11 @@ set_target_properties(focus_sweep_demo PROPERTIES
 )
 
 set_target_properties(af_point_polling_demo PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED ON
+)
+
+set_target_properties(af_position_polling_demo PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED ON
 )
